@@ -2,6 +2,9 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, HttpUrl, constr
 from typing import List, Optional
 from fastapi.middleware.cors import CORSMiddleware
+from linkedinProfileExtractor import LinkedinProfile
+from urllib.parse import urlparse
+import json
 
 app = FastAPI()
 
@@ -16,10 +19,8 @@ app.add_middleware(
 
 
 class ResearchRequest(BaseModel):
-    role_title: constr(
-        min_length=1, strip_whitespace=True
-    )  # Required, non-empty string
-    linkedin_urls: Optional[List[HttpUrl]] = []  # Optional list of valid URLs
+    role_title: str
+    linkedin_urls: Optional[List[str]] = []  # Optional list of valid URLs
     industry_context: Optional[str] = None
 
 
@@ -32,14 +33,15 @@ async def create_research(request: ResearchRequest):
         # 3. Generate research results
 
         # For now, we'll just echo back the received data
+        linkedInProfiles = []
+        for url in request.linkedin_urls:
+            profile = LinkedinProfile(url.split("/")[4]).getProfile()
+            linkedInProfiles.append(profile)
+            print(json.dumps(profile))
         return {
             "status": "success",
             "message": "Research request received",
-            "data": {
-                "role_title": request.role_title,
-                "linkedin_urls": [str(url) for url in request.linkedin_urls],
-                "industry_context": request.industry_context,
-            },
+            "data": linkedInProfiles,
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

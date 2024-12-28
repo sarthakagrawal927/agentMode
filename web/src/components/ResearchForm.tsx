@@ -16,10 +16,11 @@ const ResearchForm = () => {
     linkedinUrls: [""],
     industryContext: "",
   });
+  const [responseData, setResponseData] = useState<{ [key: string]: any }>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!formData.roleTitle.trim()) {
       toast({
         variant: "destructive",
@@ -30,14 +31,32 @@ const ResearchForm = () => {
     }
 
     setIsLoading(true);
-    
-    // Simulate API call
+
     try {
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      const response = await fetch("http://localhost:8000/api/research", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          role_title: formData.roleTitle,
+          linkedin_urls: formData.linkedinUrls.filter(url => url.trim() !== ""),
+          industry_context: formData.industryContext || null,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Network response was not ok");
+      }
+
+      const data = await response.json();
+      setResponseData(data);
+
       toast({
         title: "Success",
         description: "Research parameters submitted successfully",
       });
+
       // Reset form
       setFormData({
         roleTitle: "",
@@ -167,6 +186,15 @@ const ResearchForm = () => {
           )}
         </button>
       </form>
+
+      {responseData && (
+        <div className="mt-6">
+          <h2 className="text-lg font-semibold">Response Data</h2>
+          <pre className="bg-gray-100 p-4 rounded">
+            {JSON.stringify(responseData, null, 2)}
+          </pre>
+        </div>
+      )}
     </div>
   );
 };

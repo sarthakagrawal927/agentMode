@@ -11,7 +11,7 @@ auth_password = getenv("AUTH_PASSWORD")
 if not auth_email or not auth_password:
     raise ValueError("AUTH_EMAIL and AUTH_PASSWORD environment variables must be set")
 
-api = Linkedin(auth_email, auth_password)
+linkedinAPI = Linkedin(auth_email, auth_password)
 
 
 class LinkedinProfile:
@@ -22,7 +22,9 @@ class LinkedinProfile:
 
     def setProfile(self):
         # Get the profile using the username
-        profile = api.get_profile(self.username)
+        print(f"Getting profile for {self.username}")
+        profile = linkedinAPI.get_profile(self.username)
+        print(f"Profile for {self.username} retrieved")
 
         # Set the basic attributes
         self.name = profile["firstName"] + " " + profile["lastName"]
@@ -120,13 +122,10 @@ class LinkedinProfile:
             "profile_picture": self.profile_picture,
             "public_id": self.public_id,
             "languages_spoken": self.languages_spoken,
+            "posts": self.posts,
         }
 
     def getProfilePosts(self):
-        posts = api.get_profile_posts(self.username)
+        posts = linkedinAPI.get_profile_posts(self.username)
         posts = list(map(lambda post: post["commentary"]["text"]["text"], posts))
         return posts
-
-
-profile = LinkedinProfile("sarthakagrawal927")
-print(json.dumps(profile.getProfile(), indent=4))
