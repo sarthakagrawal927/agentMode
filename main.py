@@ -3,7 +3,7 @@ from pydantic import BaseModel, HttpUrl, constr
 from typing import List, Optional
 from fastapi.middleware.cors import CORSMiddleware
 from linkedinProfileExtractor import LinkedinProfile
-from urllib.parse import urlparse
+from jobScraper import getJobDescriptions
 import json
 
 app = FastAPI()
@@ -27,21 +27,19 @@ class ResearchRequest(BaseModel):
 @app.post("/api/research")
 async def create_research(request: ResearchRequest):
     try:
-        # Here you would typically:
-        # 1. Process the input
-        # 2. Extract data from LinkedIn profiles
-        # 3. Generate research results
-
-        # For now, we'll just echo back the received data
+        # Get LinkedIn profiles
         linkedInProfiles = []
         for url in request.linkedin_urls:
-            profile = LinkedinProfile(url.split("/")[4]).getProfile()
-            linkedInProfiles.append(profile)
-            print(json.dumps(profile))
+            profile = LinkedinProfile(url.split("/")[4])
+            linkedInProfiles.append(profile.getProfile())
+
+        # Get job descriptions
+        jobDescriptions = getJobDescriptions([request.role_title])
+
         return {
             "status": "success",
             "message": "Research request received",
-            "data": linkedInProfiles,
+            "data": {"profiles": linkedInProfiles, "jd": jobDescriptions},
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
