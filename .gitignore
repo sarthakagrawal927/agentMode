@@ -2,3 +2,4 @@ __pycache__
 my-crawler
 .env
 *.csv
+task.md

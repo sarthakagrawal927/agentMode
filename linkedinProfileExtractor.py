@@ -1,7 +1,6 @@
 from linkedin_api import Linkedin
 from os import getenv
 from dotenv import load_dotenv
-import json
 
 load_dotenv()
 # Authenticate using any Linkedin user account credentials
@@ -15,16 +14,20 @@ linkedinAPI = Linkedin(auth_email, auth_password)
 
 
 class LinkedinProfile:
-    def __init__(self, username):
+    def __init__(self, username=None, urn_id=None):
+        if not username and not urn_id:
+            raise ValueError("Either username or urn_id must be provided")
         self.username = username
+        self.urn_id = urn_id
+        self.identifier = username if username else urn_id
         self.setProfile()
         self.posts = self.getProfilePosts()
 
     def setProfile(self):
-        # Get the profile using the username
-        print(f"Getting profile for {self.username}")
-        profile = linkedinAPI.get_profile(self.username)
-        print(f"Profile for {self.username} retrieved")
+        # Get the profile using the username or urn_id
+        print(f"Getting profile for {self.identifier}")
+        profile = linkedinAPI.get_profile(self.username, urn_id=self.urn_id)
+        print(f"Profile for {self.identifier} retrieved")
 
         try:
             # Set the basic attributes
@@ -107,13 +110,13 @@ class LinkedinProfile:
             self.public_id = profile.get("public_id", "N/A")
             self.languages_spoken = list(self.languages.keys())
         except Exception as e:
-            print(f"Error setting profile for {self.username}: {str(e)}")
-            raise ValueError(f"Error setting profile for {self.username}: {str(e)}")
+            print(f"Error setting profile for {self.identifier}: {str(e)}")
+            raise ValueError(f"Error setting profile for {self.identifier}: {str(e)}")
 
-        print(f"Profile for {self.username} set")
+        print(f"Profile for {self.identifier} set")
 
     def getProfile(self):
-        print(f"Getting profile for {self.username}")
+        print(f"Getting profile for {self.identifier}")
         return {
             "name": self.name,
             "username": self.username,
@@ -134,8 +137,29 @@ class LinkedinProfile:
         }
 
     def getProfilePosts(self):
-        print(f"Getting posts for {self.username}")
-        posts = linkedinAPI.get_profile_posts(self.username)
-        print(f"Posts for {self.username} retrieved")
-        posts = list(map(lambda post: post["commentary"]["text"]["text"], posts))
+        print(f"Getting posts for {self.identifier}")
+        posts = linkedinAPI.get_profile_posts(self.username, urn_id=self.urn_id)
+        print(f"Posts for {self.identifier} retrieved")
+        if not posts:
+            return []
+        posts = list(
+            map(
+                lambda post: post.get("commentary", {})
+                .get("text", {})
+                .get("text", "N/A"),
+                posts,
+            )
+        )
         return posts
+
+
+def searchProfiles(query):
+    print(f"Searching profiles for {query}")
+    profiles = linkedinAPI.search_people(keywords=[query], limit=2)
+    profiles = [
+        LinkedinProfile(None, profile["urn_id"]).getProfile()
+        for profile in profiles
+        if profile.get("urn_id") is not None
+    ]
+    print(f"Profiles for {query} retrieved")
+    return profiles
