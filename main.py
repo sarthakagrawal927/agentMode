@@ -1,10 +1,13 @@
+from dotenv import load_dotenv
+
+load_dotenv()
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, HttpUrl, constr
 from typing import List, Optional
 from fastapi.middleware.cors import CORSMiddleware
 from linkedinProfileExtractor import LinkedinProfile
 from jobScraper import getJobDescriptions
-import json
+from reddit import get_top_posts_for_topic
 
 app = FastAPI()
 
@@ -27,6 +30,11 @@ class ResearchRequest(BaseModel):
 @app.post("/api/research")
 async def create_research(request: ResearchRequest):
     try:
+        # find top posts for industry context
+        reddit_top_posts = []
+        if request.industry_context:
+            reddit_top_posts = await get_top_posts_for_topic(request.industry_context)
+
         # Get LinkedIn profiles
         linkedInProfiles = []
         for url in request.linkedin_urls:
@@ -39,9 +47,14 @@ async def create_research(request: ResearchRequest):
         return {
             "status": "success",
             "message": "Research request received",
-            "data": {"profiles": linkedInProfiles, "jd": jobDescriptions},
+            "data": {
+                "profiles": linkedInProfiles,
+                "jd": jobDescriptions,
+                "reddit": reddit_top_posts,
+            },
         }
     except Exception as e:
+        print(e)
         raise HTTPException(status_code=500, detail=str(e))
 
 

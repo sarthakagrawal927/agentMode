@@ -1,14 +1,14 @@
 from linkedin_api import Linkedin
 from os import getenv
-from dotenv import load_dotenv
 
-load_dotenv()
 # Authenticate using any Linkedin user account credentials
-auth_email = getenv("AUTH_EMAIL")
-auth_password = getenv("AUTH_PASSWORD")
+auth_email = getenv("LINKEDIN_AUTH_EMAIL")
+auth_password = getenv("LINKEDIN_AUTH_PASSWORD")
 
 if not auth_email or not auth_password:
-    raise ValueError("AUTH_EMAIL and AUTH_PASSWORD environment variables must be set")
+    raise ValueError(
+        "LINKEDIN_AUTH_EMAIL and LINKEDIN_AUTH_PASSWORD environment variables must be set"
+    )
 
 linkedinAPI = Linkedin(auth_email, auth_password)
 
@@ -25,7 +25,7 @@ class LinkedinProfile:
 
     def setProfile(self):
         # Get the profile using the username or urn_id
-        print(f"Getting profile for {self.identifier}")
+        print(f"Fetching profile for {self.identifier}")
         profile = linkedinAPI.get_profile(self.username, urn_id=self.urn_id)
         print(f"Profile for {self.identifier} retrieved")
 
@@ -116,7 +116,7 @@ class LinkedinProfile:
         print(f"Profile for {self.identifier} set")
 
     def getProfile(self):
-        print(f"Getting profile for {self.identifier}")
+        print(f"Returning profile for {self.identifier}")
         return {
             "name": self.name,
             "username": self.username,

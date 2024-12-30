@@ -38,7 +38,7 @@ def scrapeJobByRole(role: str):
         # location="San Francisco, CA",
         results_wanted=20,
         enforce_annual_salary=True,
-        hours_old=72,
+        hours_old=168,
         linkedin_fetch_description=True,
         # country_indeed="USA",
         # linkedin_fetch_description=True # gets more info such as description, direct job url (slower)
