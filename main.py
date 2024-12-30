@@ -8,6 +8,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from linkedinProfileExtractor import LinkedinProfile
 from jobScraper import getJobDescriptions
 from reddit import get_top_posts_for_topic
+from llm.api import execute_chat_completion
+import json
 
 app = FastAPI()
 
@@ -47,11 +49,15 @@ async def create_research(request: ResearchRequest):
         return {
             "status": "success",
             "message": "Research request received",
-            "data": {
-                "profiles": linkedInProfiles,
-                "jd": jobDescriptions,
-                "reddit": reddit_top_posts,
-            },
+            "data": await execute_chat_completion(
+                json.dumps(
+                    {
+                        "profiles": linkedInProfiles,
+                        "jd": jobDescriptions,
+                        "reddit": reddit_top_posts,
+                    }
+                )
+            ),
         }
     except Exception as e:
         print(e)

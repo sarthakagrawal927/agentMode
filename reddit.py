@@ -19,7 +19,9 @@ async def get_top_posts_for_topic(topic):
 
     for subreddit in subredditsResponse["subreddits"]:
         subreddit = await reddit.subreddit(subreddit["name"])
-        async for submission in subreddit.hot(limit=40):
+        async for submission in subreddit.hot(
+            limit=100 / len(subredditsResponse["subreddits"])
+        ):
             posts.append(submission.title)
 
             # print("All attributes of the submission object:")
