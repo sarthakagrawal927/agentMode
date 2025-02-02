@@ -1,6 +1,7 @@
 import asyncpraw as praw
 from os import getenv
 
+
 reddit = praw.Reddit(
     client_id=getenv("REDDIT_CLIENT_ID"),
     client_secret=getenv("REDDIT_CLIENT_SECRET"),
@@ -27,5 +28,4 @@ async def get_top_posts_for_topic(topic):
             # print("All attributes of the submission object:")
             # for key, value in vars(submission).items():
             #     print(f"{key}: {value}")
-
     return posts

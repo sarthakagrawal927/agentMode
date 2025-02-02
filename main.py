@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from linkedinProfileExtractor import LinkedinProfile
 from jobScraper import getJobDescriptions
 from reddit import get_top_posts_for_topic
-from llm.api import execute_chat_completion
+from llm_api import execute_chat_completion
 import json
 
 app = FastAPI()

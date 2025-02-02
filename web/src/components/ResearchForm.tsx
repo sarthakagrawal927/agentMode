@@ -121,38 +121,18 @@ const ResearchForm = () => {
         </div>
 
         <div className="form-group">
-          <label className="form-label">
+          <label htmlFor="linkedinUrls" className="form-label">
             LinkedIn Profile URLs (optional)
           </label>
-          {formData.linkedinUrls.map((url, index) => (
-            <div key={index} className="flex gap-2 mt-2">
-              <input
-                type="url"
-                className="form-input"
-                placeholder="Enter LinkedIn URL"
-                value={url}
-                onChange={(e) => handleLinkedInUrlChange(index, e.target.value)}
-              />
-              {index > 0 && (
-                <button
-                  type="button"
-                  onClick={() => removeLinkedInUrl(index)}
-                  className="px-3 py-2 text-red-600 hover:text-red-700 transition-colors"
-                >
-                  Remove
-                </button>
-              )}
-            </div>
-          ))}
-          {formData.linkedinUrls.length < 3 && (
-            <button
-              type="button"
-              onClick={addLinkedInUrl}
-              className="mt-2 text-sm text-blue-600 hover:text-blue-700 transition-colors"
-            >
-              + Add another URL
-            </button>
-          )}
+          <textarea
+            id="linkedinUrls"
+            className="form-textarea"
+            placeholder="Enter LinkedIn URLs, one per line"
+            value={formData.linkedinUrls.join("\n")}
+            onChange={(e) =>
+              setFormData({ ...formData, linkedinUrls: e.target.value.split("\n") })
+            }
+          />
         </div>
 
         <div className="form-group">
