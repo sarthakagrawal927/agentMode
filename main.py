@@ -64,6 +64,29 @@ async def create_research(request: ResearchRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/research/subreddit")
+async def research_subreddit(data: dict):
+    try:
+        subreddit_name = data.get("subreddit_name")
+
+        if not subreddit_name:
+            raise HTTPException(status_code=400, detail="Subreddit name required")
+
+        # TODO: Add actual subreddit analysis logic
+        # This is mock data for testing
+        return {
+            "subreddit": subreddit_name,
+            "stats": {"members": 1500000, "active_users": 250000, "daily_posts": 3500},
+            "top_posts": [
+                {"title": "Post 1", "upvotes": 45000},
+                {"title": "Post 2", "upvotes": 42000},
+            ],
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Test endpoint
 @app.get("/")
 async def read_root():
