@@ -7,7 +7,7 @@ from typing import List, Optional
 from fastapi.middleware.cors import CORSMiddleware
 from linkedinProfileExtractor import LinkedinProfile
 from jobScraper import getJobDescriptions
-from reddit import get_top_posts_for_topic
+from reddit import get_top_posts_for_topic, get_top_posts_for_subreddit
 from llm_api import execute_chat_completion
 import json
 
@@ -76,11 +76,7 @@ async def research_subreddit(data: dict):
         # This is mock data for testing
         return {
             "subreddit": subreddit_name,
-            "stats": {"members": 1500000, "active_users": 250000, "daily_posts": 3500},
-            "top_posts": [
-                {"title": "Post 1", "upvotes": 45000},
-                {"title": "Post 2", "upvotes": 42000},
-            ],
+            "top_posts": await get_top_posts_for_subreddit(subreddit_name),
         }
 
     except Exception as e:
