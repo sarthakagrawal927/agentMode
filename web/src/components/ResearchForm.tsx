@@ -1,93 +1,68 @@
 "use client";
 
-import { useState } from "react";
-import { toast } from "@/hooks/use-toast";
-import { Loader2 } from "lucide-react";
+import { useFormHandler } from "@/hooks/use-form-handler";
 import { api } from "@/services/api";
 import JsonViewer from "./JsonViewer";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { Loader2 } from "lucide-react";
 
-interface FormData {
+interface ResearchFormData {
   roleTitle: string;
   linkedinUrls: string[];
   industryContext: string;
 }
 
 export default function ResearchForm() {
-  const [isLoading, setIsLoading] = useState(false);
-  const [formData, setFormData] = useState<FormData>({
-    roleTitle: "",
-    linkedinUrls: [""],
-    industryContext: "",
+  const {
+    formData,
+    setFormData,
+    isLoading,
+    responseData,
+    handleSubmit,
+  } = useFormHandler<ResearchFormData>({
+    initialData: {
+      roleTitle: "",
+      linkedinUrls: [""],
+      industryContext: "",
+    },
+    validateForm: (data) => {
+      if (!data.roleTitle.trim()) return "Role title/description is required";
+      return null;
+    },
+    onSubmit: async (data) => {
+      return api.research({
+        role_title: data.roleTitle,
+        linkedin_urls: data.linkedinUrls.filter(url => url.trim() !== ""),
+        industry_context: data.industryContext || null,
+      });
+    },
+    successMessage: "Research data fetched successfully",
   });
-  const [responseData, setResponseData] = useState<JSON>(null);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    if (!formData.roleTitle.trim()) {
-      toast({
-        variant: "destructive",
-        title: "Error",
-        description: "Role title/description is required",
-      });
-      return;
-    }
-
-    setIsLoading(true);
-
-    try {
-      const data = await api.research({
-        role_title: formData.roleTitle,
-        linkedin_urls: formData.linkedinUrls.filter(url => url.trim() !== ""),
-        industry_context: formData.industryContext || null,
-      });
-      
-      setResponseData(data);
-
-      toast({
-        title: "Success",
-        description: "Research parameters submitted successfully",
-      });
-
-      // Reset form
-      setFormData({
-        roleTitle: "",
-        linkedinUrls: [""],
-        industryContext: "",
-      });
-    } catch (error) {
-      toast({
-        variant: "destructive",
-        title: "Error",
-        description: "Failed to submit research parameters",
-      });
-    } finally {
-      setIsLoading(false);
-    }
+  const addLinkedinUrl = () => {
+    setFormData({
+      ...formData,
+      linkedinUrls: [...formData.linkedinUrls, ""],
+    });
   };
 
-  const handleLinkedInUrlChange = (index: number, value: string) => {
+  const removeLinkedinUrl = (index: number) => {
+    setFormData({
+      ...formData,
+      linkedinUrls: formData.linkedinUrls.filter((_, i) => i !== index),
+    });
+  };
+
+  const updateLinkedinUrl = (index: number, value: string) => {
     const newUrls = [...formData.linkedinUrls];
     newUrls[index] = value;
-    setFormData({ ...formData, linkedinUrls: newUrls });
-  };
-
-  const addLinkedInUrl = () => {
-    if (formData.linkedinUrls.length < 3) {
-      setFormData({
-        ...formData,
-        linkedinUrls: [...formData.linkedinUrls, ""],
-      });
-    }
-  };
-
-  const removeLinkedInUrl = (index: number) => {
-    const newUrls = formData.linkedinUrls.filter((_, i) => i !== index);
-    setFormData({ ...formData, linkedinUrls: newUrls });
+    setFormData({
+      ...formData,
+      linkedinUrls: newUrls,
+    });
   };
 
   return (
@@ -107,7 +82,7 @@ export default function ResearchForm() {
             value={formData.roleTitle}
             onChange={(e) => setFormData({ ...formData, roleTitle: e.target.value })}
             placeholder="e.g., Senior Software Engineer"
-            required
+            disabled={isLoading}
           />
         </div>
 
@@ -117,14 +92,16 @@ export default function ResearchForm() {
             <div key={index} className="flex gap-2">
               <Input
                 value={url}
-                onChange={(e) => handleLinkedInUrlChange(index, e.target.value)}
+                onChange={(e) => updateLinkedinUrl(index, e.target.value)}
                 placeholder="LinkedIn profile URL"
+                disabled={isLoading}
               />
-              {index > 0 && (
+              {formData.linkedinUrls.length > 1 && (
                 <Button
                   type="button"
                   variant="destructive"
-                  onClick={() => removeLinkedInUrl(index)}
+                  onClick={() => removeLinkedinUrl(index)}
+                  disabled={isLoading}
                 >
                   Remove
                 </Button>
@@ -135,8 +112,8 @@ export default function ResearchForm() {
             <Button
               type="button"
               variant="outline"
-              onClick={addLinkedInUrl}
-              className="w-full"
+              onClick={addLinkedinUrl}
+              disabled={isLoading}
             >
               Add LinkedIn URL
             </Button>
@@ -150,19 +127,13 @@ export default function ResearchForm() {
             value={formData.industryContext}
             onChange={(e) => setFormData({ ...formData, industryContext: e.target.value })}
             placeholder="Add any relevant industry context..."
-            rows={4}
+            disabled={isLoading}
           />
         </div>
 
-        <Button type="submit" disabled={isLoading} className="w-full">
-          {isLoading ? (
-            <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Processing...
-            </>
-          ) : (
-            "Submit"
-          )}
+        <Button type="submit" disabled={isLoading}>
+          {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+          Submit
         </Button>
       </form>
 

@@ -1,99 +1,77 @@
-import { useState } from "react";
-import { useToast } from "@/components/ui/use-toast";
-import { Loader2 } from "lucide-react";
 import { api } from "@/services/api";
-import { JsonViewer } from "./JsonViewer";
+import { useFormHandler } from "@/hooks/use-form-handler";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Loader2 } from "lucide-react";
+import { useRouter } from 'next/navigation';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
+
+interface SubredditFormData {
+  subreddit: string;
+}
 
 const SubredditForm = () => {
-  const { toast } = useToast();
-  const [isLoading, setIsLoading] = useState(false);
-  const [subreddit, setSubreddit] = useState("");
-  const [responseData, setResponseData] = useState<JSON>(null);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    if (!subreddit.trim()) {
-      toast({
-        variant: "destructive",
-        title: "Error",
-        description: "Subreddit name is required",
-      });
-      return;
-    }
-
-    setIsLoading(true);
-
-    try {
-      const data = await api.subredditResearch({
-        subreddit_name: subreddit,
-      });
-
-      setResponseData(data);
-
-      toast({
-        title: "Success",
-        description: "Subreddit data fetched successfully",
-      });
-
-      // Reset form
-      setSubreddit("");
-    } catch (error) {
-      toast({
-        variant: "destructive",
-        title: "Error",
-        description: "Failed to fetch subreddit data",
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  const router = useRouter();
+  const {
+    formData,
+    setFormData,
+    isLoading,
+    handleSubmit,
+  } = useFormHandler<SubredditFormData>({
+    initialData: { subreddit: "" },
+    validateForm: (data) => {
+      if (!data.subreddit.trim()) return "Subreddit name is required";
+      return null;
+    },
+    onSubmit: async (data) => {
+      router.push(`/r/${data.subreddit}`);
+    },
+    successMessage: "Redirecting to subreddit...",
+  });
 
   return (
-    <div className="form-container">
-      <div>
-        <h1 className="form-title">Subreddit Research</h1>
-        <p className="form-subtitle">
-          Enter a subreddit name to analyze its content
-        </p>
-      </div>
+    <Card className="w-full max-w-2xl mx-auto">
+      <CardHeader>
+        <CardTitle className="text-2xl">Subreddit Research</CardTitle>
+        <CardDescription>
+          Enter a subreddit name to analyze its content and statistics
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form onSubmit={handleSubmit} className="space-y-6">
+          <div className="space-y-2">
+            <Label htmlFor="subreddit" className="text-sm font-medium">
+              Subreddit Name <span className="text-red-500">*</span>
+            </Label>
+            <div className="relative">
+              <span className="absolute left-3 top-2.5 text-gray-500">r/</span>
+              <Input
+                type="text"
+                id="subreddit"
+                className="pl-7"
+                placeholder="programming"
+                value={formData.subreddit}
+                onChange={(e) => setFormData({ subreddit: e.target.value })}
+                disabled={isLoading}
+              />
+            </div>
+            <p className="text-sm text-gray-500">
+              Enter the name without "r/" prefix
+            </p>
+          </div>
 
-      <form onSubmit={handleSubmit} className="space-y-6">
-        <div className="form-group">
-          <label htmlFor="subreddit" className="form-label">
-            Subreddit Name<span className="required-star">*</span>
-          </label>
-          <input
-            type="text"
-            id="subreddit"
-            className="form-input"
-            placeholder="e.g. programming"
-            value={subreddit}
-            onChange={(e) => setSubreddit(e.target.value)}
-            required
-          />
-        </div>
-
-        <button
-          type="submit"
-          className="submit-button"
-          disabled={isLoading}
-        >
-          {isLoading ? (
-            <>
-              <Loader2 className="animate-spin inline-block mr-2 h-4 w-4" />
-              Processing...
-            </>
-          ) : (
-            "Analyze Subreddit"
-          )}
-        </button>
-      </form>
-
-      {responseData && (
-        <JsonViewer data={responseData} />
-      )}
-    </div>
+          <Button 
+            type="submit" 
+            disabled={isLoading}
+            className="w-full"
+          >
+            {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            {isLoading ? 'Analyzing...' : 'Analyze Subreddit'}
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
   );
 };
 

@@ -1,27 +1,11 @@
 import { NextResponse } from "next/server";
+import { withErrorHandler, fetchJson } from "@/lib/api-utils";
 
-export async function POST(request: Request) {
-  try {
-    const body = await request.json();
-    
-    const response = await fetch("http://localhost:8000/api/research", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    });
-
-    if (!response.ok) {
-      throw new Error("Network response was not ok");
-    }
-
-    const data = await response.json();
-    return NextResponse.json(data);
-  } catch (error) {
-    return NextResponse.json(
-      { error: "Failed to fetch data" },
-      { status: 500 }
-    );
-  }
-}
+export const POST = withErrorHandler(async (request: Request) => {
+  const body = await request.json();
+  const data = await fetchJson("http://localhost:8000/api/research", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  return NextResponse.json(data);
+});
