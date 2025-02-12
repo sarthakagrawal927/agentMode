@@ -3,3 +3,4 @@ my-crawler
 .env
 *.csv
 task.md
+web/.next

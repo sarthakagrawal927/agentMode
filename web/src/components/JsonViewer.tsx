@@ -1,8 +1,10 @@
+"use client";
+
 import { useState } from "react";
 
 interface JsonViewerProps {
   data: any;
-  title: string;
+  title?: string;
 }
 
 export default function JsonViewer({ data, title }: JsonViewerProps) {

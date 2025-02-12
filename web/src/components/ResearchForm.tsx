@@ -1,8 +1,14 @@
+"use client";
+
 import { useState } from "react";
-import { useToast } from "@/components/ui/use-toast";
+import { toast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
 import { api } from "@/services/api";
-import { JsonViewer } from "./JsonViewer";
+import JsonViewer from "./JsonViewer";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
 
 interface FormData {
   roleTitle: string;
@@ -10,8 +16,7 @@ interface FormData {
   industryContext: string;
 }
 
-const ResearchForm = () => {
-  const { toast } = useToast();
+export default function ResearchForm() {
   const [isLoading, setIsLoading] = useState(false);
   const [formData, setFormData] = useState<FormData>({
     roleTitle: "",
@@ -86,83 +91,86 @@ const ResearchForm = () => {
   };
 
   return (
-    <div className="form-container">
-      <div>
-        <h1 className="form-title">Research Parameters</h1>
-        <p className="form-subtitle">
+    <div className="max-w-2xl mx-auto p-6">
+      <div className="mb-8">
+        <h1 className="text-3xl font-bold">Research Parameters</h1>
+        <p className="text-muted-foreground mt-2">
           Enter details about the persona you want to research
         </p>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-6">
-        <div className="form-group">
-          <label htmlFor="roleTitle" className="form-label">
-            Role Title/Description<span className="required-star">*</span>
-          </label>
-          <textarea
+        <div className="space-y-2">
+          <Label htmlFor="roleTitle">Role Title/Description</Label>
+          <Input
             id="roleTitle"
-            className="form-textarea"
-            placeholder="e.g. Senior Product Manager at B2B SaaS companies"
             value={formData.roleTitle}
-            onChange={(e) =>
-              setFormData({ ...formData, roleTitle: e.target.value })
-            }
+            onChange={(e) => setFormData({ ...formData, roleTitle: e.target.value })}
+            placeholder="e.g., Senior Software Engineer"
             required
           />
         </div>
 
-        <div className="form-group">
-          <label htmlFor="linkedinUrls" className="form-label">
-            LinkedIn Profile URLs (optional)
-          </label>
-          <textarea
-            id="linkedinUrls"
-            className="form-textarea"
-            placeholder="Enter LinkedIn URLs, one per line"
-            value={formData.linkedinUrls.join("\n")}
-            onChange={(e) =>
-              setFormData({ ...formData, linkedinUrls: e.target.value.split("\n") })
-            }
-          />
+        <div className="space-y-4">
+          <Label>LinkedIn Profile URLs (up to 3)</Label>
+          {formData.linkedinUrls.map((url, index) => (
+            <div key={index} className="flex gap-2">
+              <Input
+                value={url}
+                onChange={(e) => handleLinkedInUrlChange(index, e.target.value)}
+                placeholder="LinkedIn profile URL"
+              />
+              {index > 0 && (
+                <Button
+                  type="button"
+                  variant="destructive"
+                  onClick={() => removeLinkedInUrl(index)}
+                >
+                  Remove
+                </Button>
+              )}
+            </div>
+          ))}
+          {formData.linkedinUrls.length < 3 && (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={addLinkedInUrl}
+              className="w-full"
+            >
+              Add LinkedIn URL
+            </Button>
+          )}
         </div>
 
-        <div className="form-group">
-          <label htmlFor="industryContext" className="form-label">
-            Industry Context (optional)
-          </label>
-          <input
-            type="text"
+        <div className="space-y-2">
+          <Label htmlFor="industryContext">Industry Context (Optional)</Label>
+          <Textarea
             id="industryContext"
-            className="form-input"
-            placeholder="e.g. Enterprise Software"
             value={formData.industryContext}
-            onChange={(e) =>
-              setFormData({ ...formData, industryContext: e.target.value })
-            }
+            onChange={(e) => setFormData({ ...formData, industryContext: e.target.value })}
+            placeholder="Add any relevant industry context..."
+            rows={4}
           />
         </div>
 
-        <button
-          type="submit"
-          className="submit-button"
-          disabled={isLoading}
-        >
+        <Button type="submit" disabled={isLoading} className="w-full">
           {isLoading ? (
             <>
-              <Loader2 className="animate-spin inline-block mr-2 h-4 w-4" />
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               Processing...
             </>
           ) : (
-            "Start Research"
+            "Submit"
           )}
-        </button>
+        </Button>
       </form>
 
       {responseData && (
-        <JsonViewer data={responseData} />
+        <div className="mt-8">
+          <JsonViewer data={responseData} title="Research Results" />
+        </div>
       )}
     </div>
   );
-};
-
-export default ResearchForm;
+}
