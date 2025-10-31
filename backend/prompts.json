@@ -4,7 +4,7 @@
   "technology": "Analyze top posts and comments for r/technology. Summarize emerging tech stories, policy/ethics debates, market impacts, and concise insights.",
   "startups": "Analyze top posts and comments for r/startups. Identify founder challenges, growth strategies, funding discussions, and tactical advice worth trying.",
   "AskReddit": "Analyze top posts and comments for r/AskReddit. Surface recurring themes, memorable perspectives, and culturally relevant takeaways.",
-  "javascript": "Analyze top posts and comments for r/javascript. Highlight framework trends, ecosystem updates, DX pain points, and actionable snippets.",
+  "javascript": "For the given posts, figure out key items that are relevant for a SWE. I am interested in new techniques, projects and dev tololing.",
   "python": "Analyze top posts and comments for r/Python. Summarize popular libraries, best practices, performance tips, and common pitfalls.",
   "datascience": "Analyze top posts and comments for r/datascience. Extract modeling approaches, data tooling trends, MLOps practices, and useful resources.",
   "cybersecurity": "Analyze top posts and comments for r/cybersecurity. Summarize threat trends, tooling, incident learnings, and defensive best practices.",

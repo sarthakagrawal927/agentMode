@@ -8,11 +8,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from linkedinProfileExtractor import LinkedinProfile
 from jobScraper import getJobDescriptions
 from reddit import get_top_posts_for_topic, get_top_posts_for_subreddit
-from llm_api import execute_chat_completion
+from llm_api import execute_chat_completion, client
 import json
 from cache import get_cache, set_cache, one_day_ttl_seconds
 from datetime import datetime, timezone
 from pathlib import Path
+from fastapi.responses import StreamingResponse
 
 app = FastAPI()
 
@@ -228,6 +229,139 @@ async def list_prompts():
     try:
         prompts = _read_prompt_map()
         return {"defaultPrompt": DEFAULT_PROMPT, "prompts": prompts}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Streaming AI summary for subreddit data
+@app.post("/api/research/subreddit/summary/stream")
+async def subreddit_summary_stream(data: dict):
+    try:
+        subreddit_name = (data.get("subreddit_name") or "").strip()
+        duration = data.get("duration", "1week")
+        limit = int(data.get("limit", 20))
+        override_prompt = (data.get("prompt") or "").strip()
+        provided_reddit_data = data.get(
+            "reddit_data"
+        )  # Optional pre-fetched data from client
+
+        if not subreddit_name:
+            raise HTTPException(status_code=400, detail="Subreddit name required")
+
+        # Determine prompt: override > custom map > default
+        if override_prompt:
+            system_prompt = override_prompt
+        else:
+            prompts = _read_prompt_map()
+            raw = prompts.get(subreddit_name)
+            if isinstance(raw, str) and raw.strip():
+                system_prompt = raw
+            else:
+                system_prompt = DEFAULT_PROMPT.replace("{subreddit}", subreddit_name)
+
+        # Get reddit research data (either from request or freshly computed)
+        if provided_reddit_data and isinstance(provided_reddit_data, dict):
+            reddit_payload = provided_reddit_data
+        else:
+            reddit_payload = {
+                "subreddit": subreddit_name,
+                "period": duration,
+                "top_posts": await get_top_posts_for_subreddit(
+                    subreddit_name, limit, duration
+                ),
+            }
+
+        # Check subreddit cache for existing AI summary matching the effective prompt
+        cache_key = (
+            f"{subreddit_name.strip().lower()}::limit={limit}::duration={duration}"
+        )
+        cached_data = get_cache(SUBREDDIT_CACHE_NAMESPACE, cache_key)
+        if isinstance(cached_data, dict):
+            cached_summary = cached_data.get("ai_summary")
+            cached_prompt = cached_data.get("ai_prompt_used")
+            if (
+                isinstance(cached_summary, str)
+                and isinstance(cached_prompt, str)
+                and cached_prompt == system_prompt
+            ):
+
+                async def cached_generator():
+                    yield cached_summary
+
+                return StreamingResponse(
+                    cached_generator(), media_type="text/plain; charset=utf-8"
+                )
+
+        # Add temporal and period context to the system message
+        now_iso = datetime.now(timezone.utc).isoformat()
+        period_label = {
+            "1d": "last day",
+            "1week": "last week",
+            "1month": "last month",
+        }.get(duration, duration)
+        enriched_system = (
+            f"{system_prompt}\n\nContext: Today is {now_iso}. "
+            f"Data period: {period_label} (key: {duration}) for r/{subreddit_name}."
+        )
+
+        messages = [
+            {"role": "system", "content": enriched_system},
+            {
+                "role": "user",
+                "content": json.dumps(reddit_payload, ensure_ascii=False),
+            },
+        ]
+
+        async def token_generator():
+            try:
+                stream = await client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=messages,
+                    stream=True,
+                )
+                full_text = []
+                async for chunk in stream:
+                    try:
+                        delta = chunk.choices[0].delta
+                        content = getattr(delta, "content", None)
+                        if content:
+                            full_text.append(content)
+                            yield content
+                    except Exception:
+                        continue
+                # Persist AI summary and prompt used to subreddit cache
+                try:
+                    text = "".join(full_text)
+                    if text:
+                        # Merge into existing cached data if present; otherwise build a minimal structure
+                        base = get_cache(SUBREDDIT_CACHE_NAMESPACE, cache_key)
+                        if not isinstance(base, dict):
+                            base = {
+                                "subreddit": subreddit_name,
+                                "period": duration,
+                                "cachedAt": datetime.now(timezone.utc).isoformat(),
+                                "top_posts": reddit_payload.get("top_posts", []),
+                            }
+                        base["ai_summary"] = text
+                        base["ai_prompt_used"] = system_prompt
+                        set_cache(
+                            SUBREDDIT_CACHE_NAMESPACE,
+                            cache_key,
+                            base,
+                            one_day_ttl_seconds,
+                        )
+                except Exception:
+                    # Best-effort cache write; ignore failures
+                    pass
+            except Exception as e:
+                # Emit an error marker and stop
+                yield f"\n[Error] {str(e)}\n"
+
+        return StreamingResponse(
+            token_generator(), media_type="text/plain; charset=utf-8"
+        )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

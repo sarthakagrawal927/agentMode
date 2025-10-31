@@ -1,12 +1,15 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import DataTree from '@/components/DataTree';
+import SubredditHeader from '@/components/SubredditHeader';
 import { api } from '@/services/api';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 interface PageData {
   redditInfo: any;
@@ -28,6 +31,12 @@ export default function SubredditPage({
   const [isDefaultPrompt, setIsDefaultPrompt] = useState<boolean>(true);
   const [savingPrompt, setSavingPrompt] = useState<boolean>(false);
   const [promptMessage, setPromptMessage] = useState<string | null>(null);
+  const [aiSummary, setAiSummary] = useState<string>('');
+  const [aiGenerating, setAiGenerating] = useState<boolean>(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000/api';
+  const [aiPromptUsed, setAiPromptUsed] = useState<string | null>(null);
 
   // Fetch static subreddit info (about) once per subreddit
   useEffect(() => {
@@ -78,6 +87,12 @@ export default function SubredditPage({
           redditInfo: prev?.redditInfo,
           researchInfo: researchData,
         } as PageData));
+        if (researchData && typeof researchData === 'object') {
+          if (typeof researchData.ai_summary === 'string') setAiSummary(researchData.ai_summary);
+          else setAiSummary('');
+          if (typeof researchData.ai_prompt_used === 'string') setAiPromptUsed(researchData.ai_prompt_used);
+          else setAiPromptUsed(null);
+        }
       } catch (err) {
         console.error('Error fetching research data:', err);
         setError('Failed to load subreddit data');
@@ -106,8 +121,8 @@ export default function SubredditPage({
   return (
     <div className="space-y-8 p-8">
       <div>
-        <h2 className="text-xl font-semibold mb-4">Subreddit Info</h2>
-        <DataTree data={data.redditInfo} />
+        <h2 className="text-xl font-semibold mb-4">Subreddit</h2>
+        <SubredditHeader info={data.redditInfo} />
       </div>
 
       <div>
@@ -176,7 +191,78 @@ export default function SubredditPage({
         {postsLoading ? (
           <div className="p-4 text-sm text-gray-500">Loading hot posts…</div>
         ) : (
-          <DataTree data={data.researchInfo} />
+          <>
+            <div className="mb-3 flex items-center gap-3">
+              <Button
+                onClick={async () => {
+                  try {
+                    setAiSummary('');
+                    setAiError(null);
+                    setAiGenerating(true);
+                    const controller = new AbortController();
+                    abortRef.current = controller;
+                    const resp = await fetch(`${API_BASE_URL}/research/subreddit/summary/stream`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        subreddit_name: params.subreddit,
+                        duration: period,
+                        // Send current prompt so backend uses it as system prompt
+                        prompt,
+                        // Send the same reddit data we are displaying
+                        reddit_data: {
+                          subreddit: data.researchInfo.subreddit || params.subreddit,
+                          period: data.researchInfo.period || period,
+                          top_posts: data.researchInfo.top_posts,
+                        },
+                      }),
+                      signal: controller.signal,
+                    });
+                    if (!resp.body) {
+                      throw new Error('No response body');
+                    }
+                    const reader = resp.body.getReader();
+                    const decoder = new TextDecoder();
+                    while (true) {
+                      const { done, value } = await reader.read();
+                      if (done) break;
+                      const chunk = decoder.decode(value, { stream: true });
+                      if (chunk) setAiSummary((prev) => prev + chunk);
+                    }
+                  } catch (e: any) {
+                    if (e?.name === 'AbortError') {
+                      setAiError(null);
+                    } else {
+                      setAiError('Failed to generate summary');
+                    }
+                  } finally {
+                    setAiGenerating(false);
+                    abortRef.current = null;
+                  }
+                }}
+                disabled={aiGenerating || (!!aiSummary && aiPromptUsed === prompt)}
+              >
+                {aiGenerating ? 'Generating…' : (!!aiSummary && aiPromptUsed === prompt ? 'Summary cached' : 'Generate AI summary')}
+              </Button>
+              {aiGenerating && (
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    try { abortRef.current?.abort(); } catch { }
+                  }}
+                >
+                  Stop
+                </Button>
+              )}
+            </div>
+            {aiError && <div className="text-sm text-red-600 mb-2">{aiError}</div>}
+            {aiSummary && (
+              <div className="mb-4 p-3 border rounded bg-white text-sm max-h-80 overflow-auto prose prose-sm">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{aiSummary}</ReactMarkdown>
+              </div>
+            )}
+            <DataTree data={data.researchInfo?.top_posts ?? []} />
+          </>
         )}
       </div>
     </div>

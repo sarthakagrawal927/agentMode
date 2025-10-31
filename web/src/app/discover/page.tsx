@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -11,6 +13,7 @@ type FeedItem = {
   subreddit: string;
   period: Duration;
   cachedAt?: string;
+  ai_summary?: string;
   top_posts: Array<{
     title: string;
     selftext?: string;
@@ -97,7 +100,11 @@ export default function DiscoverPage() {
               <CardDescription>Showing cached results for the selected period</CardDescription>
             </CardHeader>
             <CardContent className="pt-0">
-              {Array.isArray(item.top_posts) && item.top_posts.length > 0 ? (
+              {typeof item.ai_summary === 'string' && item.ai_summary.trim().length > 0 ? (
+                <div className="prose prose-sm">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.ai_summary}</ReactMarkdown>
+                </div>
+              ) : Array.isArray(item.top_posts) && item.top_posts.length > 0 ? (
                 <ul className="list-disc pl-5 space-y-2">
                   {item.top_posts.slice(0, 5).map((p, idx) => (
                     <li key={idx} className="text-sm">
