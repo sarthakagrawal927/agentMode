@@ -4,3 +4,4 @@ my-crawler
 *.csv
 task.md
 web/.next
+backend/.cache
