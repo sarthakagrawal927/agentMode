@@ -2,6 +2,7 @@ import asyncpraw as praw
 from os import getenv
 import traceback
 from datetime import datetime, timezone
+import math
 
 reddit = praw.Reddit(
     client_id=getenv("REDDIT_CLIENT_ID"),
@@ -32,6 +33,23 @@ async def get_top_posts_for_subreddit(
     print(f"Getting subreddit: {subreddit}")
     subreddit_obj = await reddit.subreddit(subreddit)
 
+    # Ensure subreddit metadata is loaded so we can read subscriber counts
+    try:
+        await subreddit_obj.load()
+        member_count = int(getattr(subreddit_obj, "subscribers", 0) or 0)
+    except Exception:
+        member_count = 0
+
+    # Compute dynamic thresholds based on subreddit size
+    # comment_threshold = log10(members)
+    # post_threshold = 2x comment_threshold
+    # reply_threshold = 0.5x comment_threshold
+    # Use floats for comparisons; guard against log10(0)
+    log_members = math.log10(member_count if member_count > 0 else 1)
+    comment_threshold = log_members
+    post_threshold = 2 * log_members
+    reply_threshold = 0.5 * log_members
+
     # Compute cutoff based on duration
     duration_map = {
         "1d": ("day", 1 * 24 * 60 * 60),
@@ -42,13 +60,21 @@ async def get_top_posts_for_subreddit(
     cutoff_ts = datetime.now(timezone.utc).timestamp() - seconds
 
     # Use top posts over the desired period; still enforce cutoff for safety
-    # Request a bit more than limit to account for filtering by time
+    # Request a bit more than limit to account for filtering by time and score filtering
     async for submission in subreddit_obj.top(time_filter=tf, limit=limit * 2):
         if submission.created_utc < cutoff_ts:
             continue
 
-        # Skip posts with no upvotes
-        if getattr(submission, "score", 0) <= 0:
+        # Skip posts that don't meet the post score threshold
+        submission_score = float(getattr(submission, "score", 0) or 0)
+        if submission_score < post_threshold:
+            # Since results are sorted by score desc, once below threshold
+            # all further posts will also be below threshold. Stop only if
+            # we have already gathered at least 5 posts.
+            if len(posts) >= 5:
+                break
+            # Otherwise continue scanning to honor the "have 5 posts" condition
+            # even though we don't expect to find more above-threshold posts.
             continue
 
         print(f"Processing submission: {submission.title}")
@@ -62,15 +88,44 @@ async def get_top_posts_for_subreddit(
             # Replace all MoreComments to get a full set of top-level comments
             await comments_list.replace_more(limit=0)
 
-            # Collect comments and pick top 10 by score
-            all_comments = []
+            # Collect top-level comments that meet the threshold
+            filtered_comments = []
             async for top_level_comment in comments_list:
-                all_comments.append(
-                    {"body": top_level_comment.body, "score": top_level_comment.score}
-                )
+                try:
+                    top_score = float(getattr(top_level_comment, "score", 0) or 0)
+                    if top_score < comment_threshold:
+                        continue
 
-            all_comments.sort(key=lambda x: x["score"], reverse=True)
-            top_comment_bodies = [c["body"] for c in all_comments[:10]]
+                    # Ensure first-level replies are loaded (we only go 1-level deep)
+                    try:
+                        await top_level_comment.replies.replace_more(limit=0)
+                    except Exception:
+                        # If replace_more fails on replies, continue with what we have
+                        pass
+
+                    # Filter one-level replies meeting the reply threshold
+                    replies = []
+                    async for reply in top_level_comment.replies:
+                        reply_score = float(getattr(reply, "score", 0) or 0)
+                        if reply_score >= reply_threshold:
+                            replies.append(
+                                {
+                                    "body": getattr(reply, "body", ""),
+                                    "score": reply_score,
+                                }
+                            )
+
+                    filtered_comments.append(
+                        {
+                            "body": getattr(top_level_comment, "body", ""),
+                            "score": top_score,
+                            "replies": replies,
+                        }
+                    )
+                except Exception:
+                    # Skip problematic comments rather than failing the whole submission
+                    continue
+            top_comment_bodies = filtered_comments
         except Exception as e:
             print(f"Error processing comments: {str(e)}")
             raise e
@@ -79,6 +134,7 @@ async def get_top_posts_for_subreddit(
             {
                 "title": submission.title,
                 "selftext": submission.selftext,
+                "score": submission_score,
                 "comments": top_comment_bodies,
             }
         )
