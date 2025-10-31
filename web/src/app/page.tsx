@@ -45,7 +45,7 @@ export default function Home() {
                 <Link
                   key={s}
                   href={`/r/${s}`}
-                  className="px-3 py-1 border rounded hover:bg-gray-50"
+                  className="px-3 py-1 border rounded hover:bg-accent hover:text-accent-foreground"
                 >
                   r/{s}
                 </Link>
