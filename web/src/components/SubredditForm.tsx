@@ -31,7 +31,7 @@ const SubredditForm = () => {
   });
 
   return (
-    <Card className="w-full max-w-2xl mx-auto">
+    <Card className="w-full max-w-2xl">
       <CardHeader>
         <CardTitle className="text-2xl">Subreddit Research</CardTitle>
         <CardDescription>

@@ -5,6 +5,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
+import { ExternalLink } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -129,8 +130,8 @@ export default function DiscoverPage() {
                             {s?.desc && <div className="text-gray-700 whitespace-pre-wrap max-h-28 overflow-hidden">{s.desc}</div>}
                           </div>
                           {postId && (
-                            <Link href={href} target="_blank" className="shrink-0 text-blue-600 text-xs underline">
-                              Open
+                            <Link href={href} target="_blank" aria-label="Open on Reddit" className="shrink-0 text-gray-500 hover:text-gray-700">
+                              <ExternalLink size={16} />
                             </Link>
                           )}
                         </div>

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ExternalLink } from "lucide-react";
 
 type SubredditInfo = {
   name: string;
@@ -14,17 +15,24 @@ type SubredditInfo = {
 export default function SubredditHeader({ info }: { info: SubredditInfo }) {
   const createdText = info?.created ? new Date(info.created).toLocaleDateString() : undefined;
   return (
-    <div className="border rounded p-4 bg-white">
-      <div className="flex items-center justify-between">
+    <div>
+      <div className="flex items-start">
         <div>
-          <div className="text-2xl font-semibold">r/{info.name}</div>
+          {info.url ? (
+            <Link
+              href={info.url}
+              target="_blank"
+              aria-label={`Open r/${info.name} on Reddit`}
+              className="inline-flex items-center gap-2 group"
+            >
+              <span className="text-2xl font-semibold group-hover:underline">r/{info.name}</span>
+              <ExternalLink size={18} className="text-gray-500 group-hover:text-gray-700" />
+            </Link>
+          ) : (
+            <div className="text-2xl font-semibold">r/{info.name}</div>
+          )}
           {info.title && <div className="text-sm text-gray-600">{info.title}</div>}
         </div>
-        {info.url && (
-          <Link href={info.url} target="_blank" className="text-sm text-blue-600 hover:underline">
-            Open on Reddit
-          </Link>
-        )}
       </div>
       {info.description && (
         <p className="mt-3 text-sm text-gray-700 whitespace-pre-wrap">{info.description}</p>

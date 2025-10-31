@@ -315,6 +315,7 @@ async def subreddit_summary_stream(data: dict):
         enriched_system = (
             f"{system_prompt}\n\nContext: Today is {now_iso}. "
             f"Data period: {period_label} (key: {duration}) for r/{subreddit_name}.\n\n"
+            "Key Rule: Give information, instead of telling what info the post gives."
             "Respond ONLY with a JSON array (no preamble, no code fences). Each item must be: "
             '{"title": string, "desc": string, "sourceId": [postId, optionalCommentId] }. '
             "Use exact IDs from the provided data. If referencing a post only, sourceId = [postId]. "
