@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import JsonViewer from '@/components/JsonViewer';
+import DataTree from '@/components/DataTree';
 import { api } from '@/services/api';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -84,7 +84,7 @@ export default function SubredditPage({
     <div className="space-y-8 p-8">
       <div>
         <h2 className="text-xl font-semibold mb-4">Subreddit Info</h2>
-        <JsonViewer data={data.redditInfo} />
+        <DataTree data={data.redditInfo} />
       </div>
 
       <div>
@@ -110,7 +110,7 @@ export default function SubredditPage({
         {postsLoading ? (
           <div className="p-4 text-sm text-gray-500">Loading hot posts…</div>
         ) : (
-          <JsonViewer data={data.researchInfo} />
+          <DataTree data={data.researchInfo} />
         )}
       </div>
     </div>

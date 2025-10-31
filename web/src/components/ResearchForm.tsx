@@ -2,7 +2,7 @@
 
 import { useFormHandler } from "@/hooks/use-form-handler";
 import { api } from "@/services/api";
-import JsonViewer from "./JsonViewer";
+import DataTree from "./DataTree";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -139,7 +139,7 @@ export default function ResearchForm() {
 
       {responseData && (
         <div className="mt-8">
-          <JsonViewer data={responseData} title="Research Results" />
+          <DataTree data={responseData} title="Research Results" />
         </div>
       )}
     </div>

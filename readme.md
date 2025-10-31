@@ -1,179 +1,60 @@
-# Agentic Data agregator
+## AgentData
 
-## Tools Used
-- openai
-- jobspy (jobs)
-- praw (reddit)
-- linkedin_api
-- lovable (web)
+A small, two-service project for researching subreddits and aggregating persona-style insights. The new structure separates a FastAPI backend from a Next.js frontend for clean deploys.
 
-Tried & discarded many other tools (mostly in scraping)
+### Architecture
+- **backend**: FastAPI service exposing `/api` endpoints
+- **web**: Next.js 14 app (App Router) consuming the backend
 
-## Planned tools for search
-- https://github.com/Nv7-GitHub/googlesearch
-- https://github.com/MarioVilas/googlesearch
-- serpapi
-- https://github.com/searxng/searxng
+Legacy notes, experiments, and older details have been moved to `oldreadme.md`.
 
-## Views
-- The code is pretty badly written, but it works.
-- Since this is essentially an optimization problems - it is best to rely on tools that are already optimized for the task. Specially if that is not the moat and time is of essence.
-- A lot (way more) data can be asked, collected, preprocessed (sub gpt calls maybe) before making the final call. This is just a basic MVP.
+### Prerequisites
+- Node.js 20+
+- Python 3.11+
 
-## How to Run
+### Environment variables
+- **Backend** (place in `backend/.env`):
+  - `OPENAI_API_KEY`
+  - `REDDIT_CLIENT_ID`
+  - `REDDIT_CLIENT_SECRET`
+- **Frontend** (place in `web/.env`):
+  - `NEXT_PUBLIC_API_BASE_URL` (e.g. `http://localhost:8000/api`)
 
-### Install dependencies
+### Local development (Poetry + Next.js)
 ```bash
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+# Backend
+cd backend
+pip install --user pipx && pipx install poetry
+poetry install
+poetry run uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
-
+# Frontend
 cd web
-nvm use 20 && npm install
+npm install
+npm run dev
 ```
 
-Create & fill the .env
+Open the app at http://localhost:3000. The API runs on http://localhost:8000.
 
-### Running
-```bash
-uvicorn main:app --reload
+Ensure you have `backend/.env` and `web/.env` populated as noted above.
 
-cd web && npm run dev
-```
+### API
+- `GET /` — health check
+- `POST /api/research/subreddit` — body: `{ subreddit_name: string, duration?: '1d' | '1week' | '1month', limit?: number }`
+- `POST /api/research` — legacy persona aggregator (kept for reference)
 
-## Sample Input
-```json
-{
-  "roleTitleDescription": "Sales Rep",
-  "linkedinProfileUrls": [
-    "https://www.linkedin.com/in/stephenbklein/",
-    "https://www.linkedin.com/in/abhishekkumariiima/",
-    "https://www.linkedin.com/in/udayparmar/"
-  ],
-  "industryContext": "Sales & Marketing"
-}
-```
+### Deploy
+- **Backend (Render)**
+  - Path: `backend/`
+  - Build Command: `pip install poetry && poetry install --no-interaction --no-ansi --no-root`
+  - Start Command: `poetry run uvicorn main:app --host 0.0.0.0 --port $PORT`
+  - Env Vars: `OPENAI_API_KEY`, `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`
+  - Optional IaC: `backend/render.yaml` is included (monorepo).
+- **Frontend (Vercel)**
+  - Framework: Next.js 14 (auto-detected)
+  - Env Var: `NEXT_PUBLIC_API_BASE_URL` → set to your Render backend public URL (e.g. `https://your-render-service.onrender.com/api`)
+  - Build Command: default (`next build`)
+  - Output: default (`.next`)
 
-## Sample Output
-```json
-{
-  "status": "success",
-  "message": "Research request received",
-  "data": {
-    "role_context": {
-      "title": "CEO",
-      "seniority": "Executive",
-      "typical_company_sizes": [
-        "Small",
-        "Medium",
-        "Large"
-      ],
-      "common_departments": [
-        "Product Development",
-        "Sales",
-        "Marketing"
-      ]
-    },
-    "background": {
-      "typical_experience_years": "15+",
-      "required_skills": [
-        "Leadership",
-        "Strategic Planning",
-        "Data Analysis",
-        "Sales and Marketing"
-      ],
-      "common_previous_roles": [
-        "Co-Founder",
-        "C-Level Executive",
-        "Marketing Director"
-      ]
-    },
-    "daily_work": {
-      "primary_responsibilities": [
-        "Oversee company strategy",
-        "Build partnerships",
-        "Manage overall operations",
-        "Drive sales and marketing initiatives"
-      ],
-      "key_stakeholders": [
-        "Investors",
-        "Employees",
-        "Clients",
-        "Partners"
-      ],
-      "common_meetings": [
-        "Board meetings",
-        "Sales strategy sessions",
-        "Product development reviews"
-      ],
-      "typical_deliverables": [
-        "Business growth reports",
-        "Strategic plans",
-        "Marketing campaigns"
-      ]
-    },
-    "challenges": {
-      "hair_on_fire_problems": [
-        "Navigating rapid market changes",
-        "Recruiting and retaining talent",
-        "Building a cohesive company culture"
-      ],
-      "common_frustrations": [
-        "Slow decision-making from stakeholders",
-        "Misalignment within departments",
-        "Dealing with financial constraints"
-      ],
-      "time_sinks": [
-        "Endless meetings with limited outcomes",
-        "Administrative tasks overshadowing strategic planning",
-        "Client retention and relationship management"
-      ]
-    },
-    "tools": {
-      "core_stack": [
-        "CRM Software (e.g., Salesforce)",
-        "Project Management Tools (e.g., Asana)",
-        "Data Analytics Tools (e.g., Tableau)"
-      ],
-      "common_workflows": [
-        "Lead generation and conversion",
-        "Client relationship management",
-        "Sales forecasting and analysis"
-      ],
-      "tool_pain_points": [
-        "Complexity in CRM usage",
-        "Overlapping tools leading to confusion",
-        "Difficulty in tracking team performance"
-      ]
-    },
-    "communication": {
-      "common_phrases": [
-        "Let's think outside the box",
-        "Data-driven decisions",
-        "Aligning our vision for success"
-      ],
-      "technical_terms": [
-        "KPIs",
-        "ROI",
-        "Market Segmentation",
-        "Lead Conversion Rate"
-      ],
-      "writing_style_notes": [
-        "Conversational yet professional tone",
-        "Use of informal anecdotes to connect with audience",
-        "Clear and concise with actionable insights"
-      ]
-    },
-    "source_metadata": {
-      "research_timestamp": "2023-10-01",
-      "sources_analyzed": [
-        "LinkedIn Posts",
-        "Job Descriptions",
-        "Industry-specific Reddit Discussions"
-      ],
-      "confidence_score": "High"
-    }
-  }
-}
-```
+### Notes
+- The older notes and examples live in `oldreadme.md` to keep this README focused on the new structure and deploy path.
