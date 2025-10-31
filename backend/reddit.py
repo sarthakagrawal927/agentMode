@@ -110,6 +110,8 @@ async def get_top_posts_for_subreddit(
                         if reply_score >= reply_threshold:
                             replies.append(
                                 {
+                                    "id": getattr(reply, "id", None),
+                                    "opId": getattr(submission, "id", None),
                                     "body": getattr(reply, "body", ""),
                                     "score": reply_score,
                                 }
@@ -117,6 +119,8 @@ async def get_top_posts_for_subreddit(
 
                     filtered_comments.append(
                         {
+                            "id": getattr(top_level_comment, "id", None),
+                            "opId": getattr(submission, "id", None),
                             "body": getattr(top_level_comment, "body", ""),
                             "score": top_score,
                             "replies": replies,
@@ -132,6 +136,7 @@ async def get_top_posts_for_subreddit(
 
         posts.append(
             {
+                "id": getattr(submission, "id", None),
                 "title": submission.title,
                 "selftext": submission.selftext,
                 "score": submission_score,

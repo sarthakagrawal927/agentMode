@@ -277,22 +277,35 @@ async def subreddit_summary_stream(data: dict):
         )
         cached_data = get_cache(SUBREDDIT_CACHE_NAMESPACE, cache_key)
         if isinstance(cached_data, dict):
-            cached_summary = cached_data.get("ai_summary")
             cached_prompt = cached_data.get("ai_prompt_used")
+            cached_struct = cached_data.get("ai_summary_structured")
+            cached_text = cached_data.get("ai_summary")
             if (
-                isinstance(cached_summary, str)
+                isinstance(cached_struct, list)
                 and isinstance(cached_prompt, str)
                 and cached_prompt == system_prompt
             ):
 
                 async def cached_generator():
-                    yield cached_summary
+                    yield json.dumps(cached_struct, ensure_ascii=False)
 
                 return StreamingResponse(
-                    cached_generator(), media_type="text/plain; charset=utf-8"
+                    cached_generator(), media_type="application/json"
+                )
+            if (
+                isinstance(cached_text, str)
+                and isinstance(cached_prompt, str)
+                and cached_prompt == system_prompt
+            ):
+
+                async def cached_text_gen():
+                    yield cached_text
+
+                return StreamingResponse(
+                    cached_text_gen(), media_type="text/plain; charset=utf-8"
                 )
 
-        # Add temporal and period context to the system message
+        # Add temporal and period context to the system message and enforce JSON shape
         now_iso = datetime.now(timezone.utc).isoformat()
         period_label = {
             "1d": "last day",
@@ -301,7 +314,11 @@ async def subreddit_summary_stream(data: dict):
         }.get(duration, duration)
         enriched_system = (
             f"{system_prompt}\n\nContext: Today is {now_iso}. "
-            f"Data period: {period_label} (key: {duration}) for r/{subreddit_name}."
+            f"Data period: {period_label} (key: {duration}) for r/{subreddit_name}.\n\n"
+            "Respond ONLY with a JSON array (no preamble, no code fences). Each item must be: "
+            '{"title": string, "desc": string, "sourceId": [postId, optionalCommentId] }. '
+            "Use exact IDs from the provided data. If referencing a post only, sourceId = [postId]. "
+            "If referencing a specific comment, sourceId = [postId, commentId]. No extra keys, no trailing commas."
         )
 
         messages = [
@@ -342,7 +359,16 @@ async def subreddit_summary_stream(data: dict):
                                 "cachedAt": datetime.now(timezone.utc).isoformat(),
                                 "top_posts": reddit_payload.get("top_posts", []),
                             }
-                        base["ai_summary"] = text
+                        # Try strict JSON parse -> store structured; else keep text fallback
+                        try:
+                            parsed = json.loads(text)
+                            if isinstance(parsed, list):
+                                base["ai_summary_structured"] = parsed
+                                base.pop("ai_summary", None)
+                            else:
+                                base["ai_summary"] = text
+                        except Exception:
+                            base["ai_summary"] = text
                         base["ai_prompt_used"] = system_prompt
                         set_cache(
                             SUBREDDIT_CACHE_NAMESPACE,
@@ -357,9 +383,7 @@ async def subreddit_summary_stream(data: dict):
                 # Emit an error marker and stop
                 yield f"\n[Error] {str(e)}\n"
 
-        return StreamingResponse(
-            token_generator(), media_type="text/plain; charset=utf-8"
-        )
+        return StreamingResponse(token_generator(), media_type="application/json")
     except HTTPException:
         raise
     except Exception as e:

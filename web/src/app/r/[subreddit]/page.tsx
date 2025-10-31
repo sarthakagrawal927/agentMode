@@ -3,13 +3,13 @@
 import { useEffect, useRef, useState } from 'react';
 import DataTree from '@/components/DataTree';
 import SubredditHeader from '@/components/SubredditHeader';
+import RedditThreads from '@/components/RedditThreads';
 import { api } from '@/services/api';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import Link from 'next/link';
 
 interface PageData {
   redditInfo: any;
@@ -32,6 +32,7 @@ export default function SubredditPage({
   const [savingPrompt, setSavingPrompt] = useState<boolean>(false);
   const [promptMessage, setPromptMessage] = useState<string | null>(null);
   const [aiSummary, setAiSummary] = useState<string>('');
+  const [aiSummaryStructured, setAiSummaryStructured] = useState<any[] | null>(null);
   const [aiGenerating, setAiGenerating] = useState<boolean>(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -88,6 +89,8 @@ export default function SubredditPage({
           researchInfo: researchData,
         } as PageData));
         if (researchData && typeof researchData === 'object') {
+          if (Array.isArray(researchData.ai_summary_structured)) setAiSummaryStructured(researchData.ai_summary_structured);
+          else setAiSummaryStructured(null);
           if (typeof researchData.ai_summary === 'string') setAiSummary(researchData.ai_summary);
           else setAiSummary('');
           if (typeof researchData.ai_prompt_used === 'string') setAiPromptUsed(researchData.ai_prompt_used);
@@ -197,6 +200,7 @@ export default function SubredditPage({
                 onClick={async () => {
                   try {
                     setAiSummary('');
+                    setAiSummaryStructured(null);
                     setAiError(null);
                     setAiGenerating(true);
                     const controller = new AbortController();
@@ -223,11 +227,24 @@ export default function SubredditPage({
                     }
                     const reader = resp.body.getReader();
                     const decoder = new TextDecoder();
+                    let buffer = '';
                     while (true) {
                       const { done, value } = await reader.read();
                       if (done) break;
                       const chunk = decoder.decode(value, { stream: true });
-                      if (chunk) setAiSummary((prev) => prev + chunk);
+                      if (chunk) buffer += chunk;
+                    }
+                    // Try to parse JSON array
+                    try {
+                      const parsed = JSON.parse(buffer);
+                      if (Array.isArray(parsed)) {
+                        setAiSummaryStructured(parsed);
+                        setAiPromptUsed(prompt);
+                      } else {
+                        setAiSummary(buffer);
+                      }
+                    } catch {
+                      setAiSummary(buffer);
                     }
                   } catch (e: any) {
                     if (e?.name === 'AbortError') {
@@ -240,9 +257,9 @@ export default function SubredditPage({
                     abortRef.current = null;
                   }
                 }}
-                disabled={aiGenerating || (!!aiSummary && aiPromptUsed === prompt)}
+                disabled={aiGenerating || ((!!aiSummary || !!aiSummaryStructured) && aiPromptUsed === prompt)}
               >
-                {aiGenerating ? 'Generating…' : (!!aiSummary && aiPromptUsed === prompt ? 'Summary cached' : 'Generate AI summary')}
+                {aiGenerating ? 'Generating…' : (((!!aiSummary || !!aiSummaryStructured) && aiPromptUsed === prompt) ? 'Summary cached' : 'Generate AI summary')}
               </Button>
               {aiGenerating && (
                 <Button
@@ -256,12 +273,42 @@ export default function SubredditPage({
               )}
             </div>
             {aiError && <div className="text-sm text-red-600 mb-2">{aiError}</div>}
-            {aiSummary && (
-              <div className="mb-4 p-3 border rounded bg-white text-sm max-h-80 overflow-auto prose prose-sm">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{aiSummary}</ReactMarkdown>
+            {Array.isArray(aiSummaryStructured) && aiSummaryStructured.length > 0 ? (
+              <div className="mb-4 p-3 border rounded bg-white text-sm max-h-80 overflow-auto">
+                <ul className="space-y-2">
+                  {aiSummaryStructured.map((item, idx) => {
+                    const ids: string[] = Array.isArray(item?.sourceId) ? item.sourceId : [];
+                    const postId = ids[0];
+                    const commentId = ids[1];
+                    const href = commentId
+                      ? `https://www.reddit.com/r/${params.subreddit}/comments/${postId}/comment/${commentId}`
+                      : `https://www.reddit.com/r/${params.subreddit}/comments/${postId}`;
+                    return (
+                      <li key={idx} className="border rounded p-2">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="font-medium">{item?.title || 'Untitled'}</div>
+                            {item?.desc && <div className="text-gray-700 whitespace-pre-wrap">{item.desc}</div>}
+                          </div>
+                          {postId && (
+                            <Link href={href} target="_blank" className="shrink-0 text-blue-600 text-xs underline">
+                              Open
+                            </Link>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
               </div>
+            ) : (
+              aiSummary && (
+                <div className="mb-4 p-3 border rounded bg-white text-sm max-h-80 overflow-auto">
+                  {aiSummary}
+                </div>
+              )
             )}
-            <DataTree data={data.researchInfo?.top_posts ?? []} />
+            <RedditThreads subreddit={params.subreddit} posts={data.researchInfo?.top_posts ?? []} />
           </>
         )}
       </div>

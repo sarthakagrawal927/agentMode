@@ -29,7 +29,6 @@ export default function Home() {
 
   return (
     <main className="container mx-auto p-8">
-      <h1 className="text-4xl font-bold mb-8">Subreddit Research</h1>
 
       <div className="mt-4">
         <SubredditForm />
