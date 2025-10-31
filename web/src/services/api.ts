@@ -8,6 +8,8 @@ interface ResearchParams {
 
 interface SubredditParams {
   subreddit_name: string;
+  duration?: "1d" | "1week" | "1month";
+  limit?: number;
 }
 
 const callApi = async <T>(endpoint: string, params: T) => {

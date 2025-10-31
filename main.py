@@ -10,6 +10,8 @@ from jobScraper import getJobDescriptions
 from reddit import get_top_posts_for_topic, get_top_posts_for_subreddit
 from llm_api import execute_chat_completion
 import json
+from cache import get_cache, set_cache, one_day_ttl_seconds
+from datetime import datetime, timezone
 
 app = FastAPI()
 
@@ -29,6 +31,10 @@ class ResearchRequest(BaseModel):
     industry_context: Optional[str] = None
 
 
+SUBREDDIT_CACHE_NAMESPACE = "subreddit_research"
+
+
+# ARCHIVED: Legacy role research endpoint (kept for reference)
 @app.post("/api/research")
 async def create_research(request: ResearchRequest):
     try:
@@ -68,16 +74,41 @@ async def create_research(request: ResearchRequest):
 async def research_subreddit(data: dict):
     try:
         subreddit_name = data.get("subreddit_name")
+        limit = data.get("limit", 20)
+        duration = data.get("duration", "1week")
 
         if not subreddit_name:
             raise HTTPException(status_code=400, detail="Subreddit name required")
+        try:
+            limit = int(limit)
+            if limit <= 0:
+                limit = 20
+        except Exception:
+            limit = 20
 
-        # TODO: Add actual subreddit analysis logic
-        # This is mock data for testing
-        return {
+        # Normalize key to avoid cache misses due to case differences
+        cache_key = (
+            f"{subreddit_name.strip().lower()}::limit={limit}::duration={duration}"
+        )
+
+        # Return cached value if valid
+        cached = get_cache(SUBREDDIT_CACHE_NAMESPACE, cache_key)
+        if cached:
+            return cached
+
+        # Compute fresh value and cache it
+        result = {
             "subreddit": subreddit_name,
-            "top_posts": await get_top_posts_for_subreddit(subreddit_name),
+            "period": duration,
+            "cachedAt": datetime.now(timezone.utc).isoformat(),
+            "top_posts": await get_top_posts_for_subreddit(
+                subreddit_name, limit, duration
+            ),
         }
+
+        set_cache(SUBREDDIT_CACHE_NAMESPACE, cache_key, result, one_day_ttl_seconds)
+
+        return result
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

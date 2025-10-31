@@ -10,7 +10,8 @@ if not auth_email or not auth_password:
         "LINKEDIN_AUTH_EMAIL and LINKEDIN_AUTH_PASSWORD environment variables must be set"
     )
 
-linkedinAPI = Linkedin(auth_email, auth_password)
+# TODO: Fix this when we have better API Access
+# linkedinAPI = Linkedin(auth_email, auth_password)
 
 
 class LinkedinProfile:
