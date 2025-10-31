@@ -17,5 +17,8 @@ RUN poetry install --no-interaction --no-ansi --no-root
 # Copy application code
 COPY . .
 
+# Document container port for runtime/proxy
+EXPOSE 8000
+
 # Run app via Poetry
 CMD ["poetry", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
