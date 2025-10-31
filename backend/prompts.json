@@ -1,0 +1,13 @@
+{
+  "MachineLearning": "Analyze top posts and comments for r/MachineLearning. Summarize research trends, notable papers, practical applications, and representative quotes.",
+  "programming": "Analyze top posts and comments for r/programming. Extract major topics, libraries/tools gaining traction, pain points, and practical takeaways for engineers.",
+  "technology": "Analyze top posts and comments for r/technology. Summarize emerging tech stories, policy/ethics debates, market impacts, and concise insights.",
+  "startups": "Analyze top posts and comments for r/startups. Identify founder challenges, growth strategies, funding discussions, and tactical advice worth trying.",
+  "AskReddit": "Analyze top posts and comments for r/AskReddit. Surface recurring themes, memorable perspectives, and culturally relevant takeaways.",
+  "javascript": "Analyze top posts and comments for r/javascript. Highlight framework trends, ecosystem updates, DX pain points, and actionable snippets.",
+  "python": "Analyze top posts and comments for r/Python. Summarize popular libraries, best practices, performance tips, and common pitfalls.",
+  "datascience": "Analyze top posts and comments for r/datascience. Extract modeling approaches, data tooling trends, MLOps practices, and useful resources.",
+  "cybersecurity": "Analyze top posts and comments for r/cybersecurity. Summarize threat trends, tooling, incident learnings, and defensive best practices.",
+  "devops": "Analyze top posts and comments for r/devops. Identify infra trends, reliability practices, CI/CD patterns, and operational lessons.",
+  "entrepreneur": "Analyze top posts and comments for r/Entrepreneur. Summarize go-to-market tactics, customer insights, revenue strategies, and execution lessons."
+}

@@ -5,6 +5,8 @@ import DataTree from '@/components/DataTree';
 import { api } from '@/services/api';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Textarea } from '@/components/ui/textarea';
+import { Button } from '@/components/ui/button';
 
 interface PageData {
   redditInfo: any;
@@ -22,6 +24,10 @@ export default function SubredditPage({
   const searchParams = useSearchParams();
   const router = useRouter();
   const [period, setPeriod] = useState<string>(searchParams.get('period') || '1week');
+  const [prompt, setPrompt] = useState<string>('');
+  const [isDefaultPrompt, setIsDefaultPrompt] = useState<boolean>(true);
+  const [savingPrompt, setSavingPrompt] = useState<boolean>(false);
+  const [promptMessage, setPromptMessage] = useState<string | null>(null);
 
   // Fetch static subreddit info (about) once per subreddit
   useEffect(() => {
@@ -40,6 +46,23 @@ export default function SubredditPage({
       }
     };
     fetchAbout();
+  }, [params.subreddit]);
+
+  // Fetch prompt for this subreddit
+  useEffect(() => {
+    const loadPrompt = async () => {
+      try {
+        const res = await api.getSubredditPrompt(params.subreddit);
+        setPrompt(res.prompt || '');
+        setIsDefaultPrompt(!!res.isDefault);
+        setPromptMessage(null);
+      } catch (e: any) {
+        setPrompt('');
+        setIsDefaultPrompt(true);
+        setPromptMessage('Failed to load prompt');
+      }
+    };
+    loadPrompt();
   }, [params.subreddit]);
 
   // Fetch research data (posts/comments) whenever period or subreddit changes
@@ -85,6 +108,49 @@ export default function SubredditPage({
       <div>
         <h2 className="text-xl font-semibold mb-4">Subreddit Info</h2>
         <DataTree data={data.redditInfo} />
+      </div>
+
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-xl font-semibold">AI Prompt</h2>
+          {isDefaultPrompt ? (
+            <span className="text-xs text-gray-500">Using default prompt</span>
+          ) : (
+            <span className="text-xs text-green-600">Custom prompt</span>
+          )}
+        </div>
+        <div className="space-y-2">
+          <Textarea
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            placeholder={`Write a custom prompt for r/${params.subreddit}`}
+            className="min-h-[120px]"
+          />
+          <div className="flex items-center gap-3">
+            <Button
+              onClick={async () => {
+                try {
+                  setSavingPrompt(true);
+                  setPromptMessage(null);
+                  const saved = await api.saveSubredditPrompt(params.subreddit, prompt);
+                  setIsDefaultPrompt(false);
+                  setPrompt(saved.prompt);
+                  setPromptMessage('Saved');
+                } catch (e: any) {
+                  setPromptMessage('Failed to save');
+                } finally {
+                  setSavingPrompt(false);
+                }
+              }}
+              disabled={savingPrompt || !prompt.trim()}
+            >
+              {savingPrompt ? 'Saving…' : 'Save prompt'}
+            </Button>
+            {promptMessage && (
+              <span className="text-xs text-gray-500">{promptMessage}</span>
+            )}
+          </div>
+        </div>
       </div>
 
       <div>

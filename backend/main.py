@@ -34,6 +34,32 @@ class ResearchRequest(BaseModel):
 
 SUBREDDIT_CACHE_NAMESPACE = "subreddit_research"
 
+# File-backed prompt store
+PROMPTS_FILE = Path(__file__).parent / "prompts.json"
+DEFAULT_PROMPT = (
+    "Analyze top posts and comments for r/{subreddit}. "
+    "Summarize key themes, actionable insights, and representative quotes."
+)
+
+
+def _read_prompt_map() -> dict:
+    try:
+        if PROMPTS_FILE.exists():
+            with PROMPTS_FILE.open("r", encoding="utf-8") as fh:
+                data = json.load(fh)
+                return data if isinstance(data, dict) else {}
+    except Exception:
+        pass
+    return {}
+
+
+def _write_prompt_map(prompts: dict) -> None:
+    try:
+        with PROMPTS_FILE.open("w", encoding="utf-8") as fh:
+            json.dump(prompts or {}, fh, ensure_ascii=False, indent=2)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # ARCHIVED: Legacy role research endpoint (kept for reference)
 @app.post("/api/research")
@@ -192,5 +218,51 @@ async def subreddit_feed(duration: str = "1week"):
                     continue
 
         return {"duration": duration, "items": items}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Prompt API
+@app.get("/api/prompts")
+async def list_prompts():
+    try:
+        prompts = _read_prompt_map()
+        return {"defaultPrompt": DEFAULT_PROMPT, "prompts": prompts}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/prompts/{subreddit}")
+async def get_subreddit_prompt(subreddit: str):
+    try:
+        s = subreddit.strip()
+        prompts = _read_prompt_map()
+        value = prompts.get(s)
+        if isinstance(value, str) and value.strip():
+            return {"subreddit": s, "prompt": value, "isDefault": False}
+        # Fall back to default prompt with token replacement
+        prompt = DEFAULT_PROMPT.replace("{subreddit}", s)
+        return {"subreddit": s, "prompt": prompt, "isDefault": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class SavePromptRequest(BaseModel):
+    prompt: str
+
+
+@app.post("/api/prompts/{subreddit}")
+async def save_subreddit_prompt(subreddit: str, data: SavePromptRequest):
+    try:
+        s = subreddit.strip()
+        new_prompt = (data.prompt or "").strip()
+        if not new_prompt:
+            raise HTTPException(status_code=400, detail="Prompt must be non-empty")
+        prompts = _read_prompt_map()
+        prompts[s] = new_prompt
+        _write_prompt_map(prompts)
+        return {"status": "ok", "subreddit": s, "prompt": new_prompt}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

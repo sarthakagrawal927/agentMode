@@ -12,6 +12,17 @@ interface SubredditParams {
   limit?: number;
 }
 
+interface PromptMapResponse {
+  defaultPrompt: string;
+  prompts: Record<string, string>;
+}
+
+interface SubredditPromptResponse {
+  subreddit: string;
+  prompt: string;
+  isDefault: boolean;
+}
+
 const callApi = async <T>(endpoint: string, params: T) => {
   const response = await fetch(`${API_BASE_URL}/${endpoint}`, {
     method: "POST",
@@ -35,5 +46,29 @@ export const api = {
 
   async subredditResearch(params: SubredditParams) {
     return callApi<SubredditParams>("research/subreddit", params);
+  },
+
+  async getPrompts(): Promise<PromptMapResponse> {
+    const resp = await fetch(`${API_BASE_URL}/prompts`, { cache: "no-store" });
+    if (!resp.ok) throw new Error("Failed to fetch prompts");
+    return resp.json();
+  },
+
+  async getSubredditPrompt(subreddit: string): Promise<SubredditPromptResponse> {
+    const resp = await fetch(`${API_BASE_URL}/prompts/${encodeURIComponent(subreddit)}`, {
+      cache: "no-store",
+    });
+    if (!resp.ok) throw new Error("Failed to fetch subreddit prompt");
+    return resp.json();
+  },
+
+  async saveSubredditPrompt(subreddit: string, prompt: string): Promise<{ status: string; subreddit: string; prompt: string }> {
+    const resp = await fetch(`${API_BASE_URL}/prompts/${encodeURIComponent(subreddit)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt }),
+    });
+    if (!resp.ok) throw new Error("Failed to save subreddit prompt");
+    return resp.json();
   },
 };
