@@ -58,3 +58,20 @@ Ensure you have `backend/.env` and `web/.env` populated as noted above.
 
 ### Notes
 - The older notes and examples live in `oldreadme.md` to keep this README focused on the new structure and deploy path.
+
+## To convert sadtalker response to video:
+
+Sample curl:
+```bash
+ curl -v -X POST \
+  -F "face=@/Users/sarthakagrawal/Desktop/agentData/sample.webp;type=image/webp" \
+  -F "audio=@/Users/sarthakagrawal/Desktop/agentData/sample_small.mp3;type=audio/mpeg" \
+  {{api_link}}/generateVideo \
+-H "x-api-key: {{api_key}}" -o response.json
+```
+
+
+```bash
+cat response.json | jq -r .video_b64 | base64 --decode > final.mp4
+open final.mp4
+```
