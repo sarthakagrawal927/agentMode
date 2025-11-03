@@ -20,13 +20,14 @@ Legacy notes, experiments, and older details have been moved to `oldreadme.md`.
 - **Frontend** (place in `web/.env`):
   - `NEXT_PUBLIC_API_BASE_URL` (e.g. `http://localhost:8000/api`)
 
-### Local development (Poetry + Next.js)
+### Local development (uv + Next.js)
 ```bash
 # Backend
 cd backend
-pip install --user pipx && pipx install poetry
-poetry install
-poetry run uvicorn main:app --reload --host 0.0.0.0 --port 8000
+curl -LsSf https://astral.sh/uv/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
+uv sync
+uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
 # Frontend
 cd web
@@ -46,8 +47,8 @@ Ensure you have `backend/.env` and `web/.env` populated as noted above.
 ### Deploy
 - **Backend (Render)**
   - Path: `backend/`
-  - Build Command: `pip install poetry && poetry install --no-interaction --no-ansi --no-root`
-  - Start Command: `poetry run uvicorn main:app --host 0.0.0.0 --port $PORT`
+  - Build Command: `curl -LsSf https://astral.sh/uv/install.sh | sh && export PATH=\"$HOME/.local/bin:$PATH\" && uv sync --no-dev`
+  - Start Command: `export PATH=\"$HOME/.local/bin:$PATH\" && uv run uvicorn main:app --host 0.0.0.0 --port $PORT`
   - Env Vars: `OPENAI_API_KEY`, `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`
   - Optional IaC: `backend/render.yaml` is included (monorepo).
 - **Frontend (Vercel)**

@@ -4,15 +4,16 @@ FROM python:3.12-slim
 # Set the working directory in the container
 WORKDIR /app
 
-# Install system dependencies and Poetry
+# Install system dependencies and uv
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
-RUN curl -sSL https://install.python-poetry.org | python3 - && \
-    ln -s /root/.local/bin/poetry /usr/local/bin/poetry
+ENV PATH="/root/.local/bin:${PATH}"
+ENV UV_LINK_MODE=copy
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Copy Poetry files and install deps
+# Copy project metadata and install deps with uv
 COPY pyproject.toml ./
-COPY poetry.lock* ./
-RUN poetry install --no-interaction --no-ansi --no-root
+COPY uv.lock* ./
+RUN uv sync --no-dev
 
 # Copy application code
 COPY . .
@@ -20,5 +21,5 @@ COPY . .
 # Document container port for runtime/proxy
 EXPOSE 8000
 
-# Run app via Poetry
-CMD ["poetry", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run app via uv
+CMD ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
