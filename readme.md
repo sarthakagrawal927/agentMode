@@ -88,6 +88,11 @@ jq -r '.chunks[]' response.json | while read -r c; do
 done
 ```
 
+## SDXL
+```bash
+jq -r '.image_base64' response.json | base64 -d > sdxl_news.png
+```
+
 ## Other Models
 - Latte-1 (T2V)
 - EchoMimic (talking head)
