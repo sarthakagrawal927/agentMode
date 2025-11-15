@@ -71,8 +71,24 @@ Sample curl:
 -H "x-api-key: {{api_key}}" -o response.json
 ```
 
+## Sadtalker
 
 ```bash
 cat response.json | jq -r .video_b64 | base64 --decode > final.mp4
 open final.mp4
 ```
+
+## Parler-TTS
+
+```bash
+i=0
+jq -r '.chunks[]' response.json | while read -r c; do
+  echo "$c" | base64 -d > "chunk_${i}.wav"   # base64 -D on macOS
+  i=$((i+1))
+done
+```
+
+## Other Models
+- Latte-1 (T2V)
+- EchoMimic (talking head)
+- SDXL (portraits)

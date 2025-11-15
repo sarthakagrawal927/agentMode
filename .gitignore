@@ -8,3 +8,4 @@ backend/.cache
 SadTalker
 sampleIO
 .vscode
+models/parler/test.py
