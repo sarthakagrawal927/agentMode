@@ -134,7 +134,6 @@ def health():
     },
     scaledown_window=300,
     timeout=600,
-    min_containers=1,  # keep one warm container so SDXL stays loaded
     # If SDXL repo is gated, set a secret with HUGGINGFACE_HUB_TOKEN and uncomment:
     # secrets=[modal.Secret.from_name("huggingface-token")],
 )

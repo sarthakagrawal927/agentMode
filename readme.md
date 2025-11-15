@@ -81,6 +81,14 @@ open final.mp4
 ## Parler-TTS
 
 ```bash
+curl -s "$BASE_URL/tts" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "text": "In today\u2019s top story, markets around the world reacted to a series of unexpected policy announcements. Analysts say the long-term impact will depend on how quickly central banks adjust to the new information.",
+    "max_chars": 400
+  }' > response.json
+
+
 i=0
 jq -r '.chunks[]' response.json | while read -r c; do
   echo "$c" | base64 -d > "chunk_${i}.wav"   # base64 -D on macOS
@@ -90,10 +98,25 @@ done
 
 ## SDXL
 ```bash
+curl -X POST -s "$BASE_URL/txt2img" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "a natural photo of female news anchor in a modern studio, wearing a suit, behind stand, sitting delivering news, slighltly zoomed in 4k, high detail, no camera",
+    "negative_prompt": "blurry, distorted, low quality, text, watermark",
+    "width": 1024,
+    "height": 1024,
+    "num_inference_steps": 40,
+    "guidance_scale": 6.0,
+    "seed": 42
+  }' > response.json
+
+
 jq -r '.image_base64' response.json | base64 -d > sdxl_news.png
 ```
 
+## Latte-1 (T2V)
+```basH
+```
+
 ## Other Models
-- Latte-1 (T2V)
 - EchoMimic (talking head)
-- SDXL (portraits)
