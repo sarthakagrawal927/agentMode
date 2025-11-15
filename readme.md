@@ -115,7 +115,20 @@ jq -r '.image_base64' response.json | base64 -d > sdxl_news.png
 ```
 
 ## Latte-1 (T2V)
-```basH
+```bash
+curl -X POST -s "$BASE_URL/t2v" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "a natural photo of female news anchor in a modern studio, wearing a suit, behind stand, sitting delivering news, slighltly zoomed in 4k, high detail, no camera",
+    "negative_prompt": "blurry, distorted, low quality, text, watermark",
+    "video_length": 16,
+    "height": 512,
+    "width": 512,
+    "num_inference_steps": 40,
+    "guidance_scale": 6.0,
+    "seed": 42,
+    "fps": 8
+  }' > response.json
 ```
 
 ## Other Models
