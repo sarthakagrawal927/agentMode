@@ -131,5 +131,20 @@ curl -X POST -s "$BASE_URL/t2v" \
   }' > response.json
 ```
 
+## Z-Image
+```bash
+curl -X POST "{}" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "prompt": "Young Chinese woman in red Hanfu, looking towards moon",
+        "height": 1024,
+        "width": 1024,
+        "num_inference_steps": 9,
+        "guidance_scale": 0.0,
+        "seed": 42
+      }'  | jq -r .image_base64 | base64 --decode > output.png
+```
+
+
 ## Other Models
 - EchoMimic (talking head)
