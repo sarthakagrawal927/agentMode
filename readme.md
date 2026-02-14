@@ -1,5 +1,8 @@
 ## AgentData
 
+![AI Generated](https://ai-percentage-pin.vercel.app/api/ai-percentage?value=50)
+![AI PRs Welcome](https://ai-percentage-pin.vercel.app/api/ai-prs?welcome=yes)
+
 A small, two-service project for researching subreddits and aggregating persona-style insights. The new structure separates a FastAPI backend from a Next.js frontend for clean deploys.
 
 ### Architecture
