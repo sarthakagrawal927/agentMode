@@ -43,9 +43,9 @@ export default function DiscoverClient({ initialItems, initialDuration }: Discov
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Fetch when duration changes away from the initial SSR value
+  // Fetch when duration changes or if SSR returned no items
   useEffect(() => {
-    if (duration === initialDuration && initialItems.length > 0) return;
+    if (duration === initialDuration && items.length > 0) return;
 
     const fetchFeed = async () => {
       setLoading(true);
