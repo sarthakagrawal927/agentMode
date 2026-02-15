@@ -72,7 +72,7 @@ export default function SubredditClient({
   });
   const [promptDialogOpen, setPromptDialogOpen] = useState<boolean>(false);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
-  const [dateInput, setDateInput] = useState('');
+  const [dateInput, setDateInput] = useState(() => new Date().toISOString().split('T')[0]);
 
   const isAdmin = !!authUser && !!ADMIN_EMAIL && authUser.email.toLowerCase() === ADMIN_EMAIL.toLowerCase();
 
