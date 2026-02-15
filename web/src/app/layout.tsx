@@ -25,15 +25,16 @@ export default function RootLayout({
       <Script src="https://accounts.google.com/gsi/client" strategy="afterInteractive" />
       <body className="min-h-screen bg-background">
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
-        <header className="border-b bg-background">
-          <div className="container mx-auto flex items-center justify-between p-4">
-            <Link href="/" className="text-xl font-semibold hover:opacity-80">
+        <header className="sticky top-0 z-50 border-b bg-background/80 backdrop-blur-sm">
+          <div className="container mx-auto flex items-center justify-between px-6 py-3">
+            <Link href="/" className="text-lg font-bold tracking-tight hover:opacity-80 transition-opacity">
               AgentData
             </Link>
-            <nav className="flex items-center gap-4">
-              <Link href="/discover" className="text-sm px-3 py-1 rounded border hover:bg-accent">
+            <nav className="flex items-center gap-3">
+              <Link href="/discover" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
                 Discover
               </Link>
+              <div className="h-4 w-px bg-border" />
               <AuthButton />
               <ThemeToggle />
             </nav>

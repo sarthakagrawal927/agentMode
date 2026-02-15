@@ -1,13 +1,10 @@
 'use client';
 
-import { api } from "@/services/api";
 import { useFormHandler } from "@/hooks/use-form-handler";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Loader2 } from "lucide-react";
+import { ArrowRight, Loader2 } from "lucide-react";
 import { useRouter } from 'next/navigation';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Label } from "@/components/ui/label";
 
 interface SubredditFormData {
   subreddit: string;
@@ -33,47 +30,28 @@ const SubredditForm = () => {
   });
 
   return (
-    <Card className="w-full max-w-2xl">
-      <CardHeader>
-        <CardTitle className="text-2xl">Subreddit Research</CardTitle>
-        <CardDescription>
-          Enter a subreddit name to analyze its content and statistics
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <div className="space-y-2">
-            <Label htmlFor="subreddit" className="text-sm font-medium">
-              Subreddit Name <span className="text-red-500">*</span>
-            </Label>
-            <div className="relative">
-              <span className="absolute left-3 top-2.5 text-gray-500">r/</span>
-              <Input
-                type="text"
-                id="subreddit"
-                className="pl-7"
-                placeholder="programming"
-                value={formData.subreddit}
-                onChange={(e) => setFormData({ subreddit: e.target.value })}
-                disabled={isLoading}
-              />
-            </div>
-            <p className="text-sm text-gray-500">
-              Enter the name without "r/" prefix
-            </p>
-          </div>
-
-          <Button 
-            type="submit" 
-            disabled={isLoading}
-            className="w-full"
-          >
-            {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            {isLoading ? 'Analyzing...' : 'Analyze Subreddit'}
-          </Button>
-        </form>
-      </CardContent>
-    </Card>
+    <form onSubmit={handleSubmit} className="flex items-center gap-2">
+      <div className="relative flex-1">
+        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground font-medium">r/</span>
+        <Input
+          type="text"
+          id="subreddit"
+          className="pl-8 h-12 text-base rounded-xl border-2 focus-visible:ring-2"
+          placeholder="Python, wallstreetbets, fitness..."
+          value={formData.subreddit}
+          onChange={(e) => setFormData({ subreddit: e.target.value })}
+          disabled={isLoading}
+        />
+      </div>
+      <Button
+        type="submit"
+        disabled={isLoading}
+        size="lg"
+        className="h-12 px-6 rounded-xl"
+      >
+        {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
+      </Button>
+    </form>
   );
 };
 

@@ -8,7 +8,7 @@ import { useRouter } from 'next/navigation';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
-import { ExternalLink } from 'lucide-react';
+import { ExternalLink, Sparkles, Settings, Square, Calendar as CalendarIcon } from 'lucide-react';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { AuthUser, getStoredUser, getAuthHeaders } from '@/lib/auth';
@@ -76,7 +76,6 @@ export default function SubredditClient({
 
   const isAdmin = !!authUser && !!ADMIN_EMAIL && authUser.email.toLowerCase() === ADMIN_EMAIL.toLowerCase();
 
-  // Listen for auth changes
   useEffect(() => {
     setAuthUser(getStoredUser());
     const interval = setInterval(() => {
@@ -85,7 +84,6 @@ export default function SubredditClient({
     return () => clearInterval(interval);
   }, []);
 
-  // If SSR timed out and we have no data, fetch client-side
   useEffect(() => {
     if (researchInfo) return;
     const fetchClientSide = async () => {
@@ -119,7 +117,6 @@ export default function SubredditClient({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [subreddit, period]);
 
-  // Fetch Reddit info client-side (Reddit blocks server IPs)
   useEffect(() => {
     const fetchAbout = async () => {
       try {
@@ -148,7 +145,7 @@ export default function SubredditClient({
   }, [subreddit]);
 
   if (error) return (
-    <main className="container mx-auto p-8">
+    <main className="container mx-auto px-6 py-8">
       <div className="text-red-500">{error}</div>
     </main>
   );
@@ -250,109 +247,171 @@ export default function SubredditClient({
     }
   };
 
+  const posts = researchInfo?.top_posts ?? [];
+
   return (
-    <main className="container mx-auto p-8 space-y-8">
-      {redditInfo && (
-        <div>
-          <SubredditHeader info={redditInfo} />
-        </div>
-      )}
+    <main className="container mx-auto px-6 py-8 space-y-6">
+      {redditInfo && <SubredditHeader info={redditInfo} />}
 
-      <div>
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="text-xl font-semibold">Summary</h2>
-          <div className="flex items-center gap-1">
-            {PERIOD_SLUGS.map(({ slug, label }) => (
-              <Link
-                key={slug}
-                href={`/r/${subreddit}/${slug}`}
-                className={`px-3 py-1 text-sm rounded border transition-colors ${
-                  period === slug
-                    ? 'bg-primary text-primary-foreground'
-                    : 'hover:bg-accent hover:text-accent-foreground'
-                }`}
-              >
-                {label}
-              </Link>
-            ))}
-          </div>
+      {/* Controls bar */}
+      <div className="flex flex-wrap items-center gap-3">
+        {/* Period tabs */}
+        <div className="flex items-center rounded-lg border bg-muted/50 p-0.5">
+          {PERIOD_SLUGS.map(({ slug, label }) => (
+            <Link
+              key={slug}
+              href={`/r/${subreddit}/${slug}`}
+              className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${
+                period === slug
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              {label}
+            </Link>
+          ))}
         </div>
 
-        {isArchive && (
-          <div className="mb-4">
-            <span className="inline-block px-2 py-1 text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200 rounded">
-              Archived: {period}
-            </span>
-          </div>
-        )}
-
-        {!isArchive && (
-          <p className="text-sm text-gray-500 mb-4">
-            Period: {period} | Cached at:{' '}
-            {postsLoading ? 'Loading...' : (researchInfo?.cachedAt ? new Date(researchInfo.cachedAt).toLocaleString() : '---')}
-          </p>
-        )}
-
-        {/* Date picker for archive navigation */}
-        <div className="flex items-center gap-2 mb-4">
+        {/* Date picker */}
+        <div className="flex items-center gap-1.5">
+          <CalendarIcon size={14} className="text-muted-foreground" />
           <Input
             type="date"
             value={dateInput}
             onChange={(e) => setDateInput(e.target.value)}
-            className="w-44 h-8 text-sm"
+            className="w-40 h-8 text-sm"
           />
-          <Button size="sm" variant="outline" className="h-8 text-xs" onClick={handleDateNavigate}>
-            Go to date
+          <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={handleDateNavigate}>
+            Go
           </Button>
-          {availableDates.length > 0 && (
-            <span className="text-xs text-muted-foreground">
-              {availableDates.length} snapshot{availableDates.length !== 1 ? 's' : ''} available
-            </span>
-          )}
         </div>
 
-        {postsLoading ? (
-          <div className="p-4 text-sm text-gray-500">Loading hot posts...</div>
-        ) : (
-          <SplitSummaryPosts
-            subreddit={subreddit}
-            aiSummary={aiSummary}
-            aiSummaryStructured={aiSummaryStructured}
-            posts={researchInfo?.top_posts ?? []}
-            onGenerateClick={handleGenerate}
-            generateLabel={generateButtonLabel}
-            generateDisabled={generateDisabled}
-            aiGenerating={aiGenerating}
-            onStopGenerate={() => { try { abortRef.current?.abort(); } catch { } }}
-            onViewPrompt={() => setPromptDialogOpen(true)}
-            isAdmin={isAdmin}
-            isArchive={isArchive}
-          />
+        {availableDates.length > 0 && (
+          <span className="text-xs text-muted-foreground">
+            {availableDates.length} snapshot{availableDates.length !== 1 ? 's' : ''}
+          </span>
+        )}
+
+        {isArchive && (
+          <span className="px-2.5 py-1 text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 rounded-full">
+            Archive: {period}
+          </span>
+        )}
+
+        {!isArchive && researchInfo?.cachedAt && (
+          <span className="text-xs text-muted-foreground ml-auto">
+            Updated {new Date(researchInfo.cachedAt).toLocaleString()}
+          </span>
         )}
       </div>
 
+      {/* Admin actions */}
+      {isAdmin && !isArchive && (
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            onClick={handleGenerate}
+            disabled={generateDisabled}
+            className="gap-1.5"
+          >
+            <Sparkles size={14} />
+            {generateButtonLabel}
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => setPromptDialogOpen(true)} className="gap-1.5">
+            <Settings size={14} />
+            Prompt
+          </Button>
+          {aiGenerating && (
+            <Button size="sm" variant="destructive" onClick={() => { try { abortRef.current?.abort(); } catch { } }} className="gap-1.5">
+              <Square size={14} />
+              Stop
+            </Button>
+          )}
+          {aiError && <span className="text-xs text-destructive">{aiError}</span>}
+        </div>
+      )}
+
+      {postsLoading ? (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="h-32 bg-muted animate-pulse rounded-lg" />
+          ))}
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* AI Summary */}
+          <div className="space-y-3">
+            <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">AI Summary</h2>
+            <div className="border rounded-lg bg-card p-4 min-h-[300px] max-h-[70vh] overflow-auto">
+              {Array.isArray(aiSummaryStructured) && aiSummaryStructured.length > 0 ? (
+                <ul className="space-y-3">
+                  {aiSummaryStructured.map((item, idx) => {
+                    const ids: string[] = Array.isArray(item?.sourceId) ? item.sourceId : [];
+                    const postId = ids[0];
+                    const commentId = ids[1];
+                    const href = commentId
+                      ? `https://www.reddit.com/r/${subreddit}/comments/${postId}/comment/${commentId}`
+                      : `https://www.reddit.com/r/${subreddit}/comments/${postId}`;
+                    return (
+                      <li key={idx} className="border rounded-lg p-3 bg-background/50 hover:bg-background transition-colors">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0 space-y-1">
+                            <div className="font-medium text-sm">{item?.title || 'Untitled'}</div>
+                            {item?.desc && <div className="text-sm text-muted-foreground leading-relaxed">{item.desc}</div>}
+                          </div>
+                          {postId && (
+                            <Link href={href} target="_blank" aria-label="Open on Reddit" className="shrink-0 text-muted-foreground hover:text-foreground transition-colors">
+                              <ExternalLink size={14} />
+                            </Link>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : aiSummary ? (
+                <div className="text-sm leading-relaxed whitespace-pre-wrap">{aiSummary}</div>
+              ) : (
+                <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
+                  {isAdmin && !isArchive ? 'Click Generate to create an AI summary' : 'No summary available'}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Posts */}
+          <div className="space-y-3">
+            <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">
+              Top Posts ({posts.length})
+            </h2>
+            <div className="border rounded-lg bg-card p-4 min-h-[300px] max-h-[70vh] overflow-auto">
+              <RedditThreads subreddit={subreddit} posts={posts} />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Prompt dialog */}
       <Dialog open={promptDialogOpen} onOpenChange={setPromptDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>View / edit AI prompt</DialogTitle>
+            <DialogTitle>AI Prompt</DialogTitle>
             <DialogDescription>
-              This prompt guides the AI summary generation for r/{subreddit}.
+              Configure the prompt used for AI summary generation for r/{subreddit}.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-2">
-            <Textarea
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              placeholder={`Write a custom prompt for r/${subreddit}`}
-              className="min-h-[160px]"
-              readOnly={!isAdmin}
-            />
-            {promptMessage && (
-              <span className="text-xs text-gray-500">{promptMessage}</span>
-            )}
-          </div>
+          <Textarea
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            placeholder={`Write a custom prompt for r/${subreddit}`}
+            className="min-h-[160px]"
+            readOnly={!isAdmin}
+          />
+          {promptMessage && (
+            <span className="text-xs text-muted-foreground">{promptMessage}</span>
+          )}
           <DialogFooter>
-            <Button variant="secondary" onClick={() => setPromptDialogOpen(false)}>Close</Button>
+            <Button variant="ghost" onClick={() => setPromptDialogOpen(false)}>Cancel</Button>
             {isAdmin && (
               <Button
                 onClick={async () => {
@@ -380,163 +439,12 @@ export default function SubredditClient({
                 }}
                 disabled={savingPrompt || !prompt.trim()}
               >
-                {savingPrompt ? 'Saving...' : 'Save prompt'}
+                {savingPrompt ? 'Saving...' : 'Save'}
               </Button>
             )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
     </main>
-  );
-}
-
-function SplitSummaryPosts({
-  subreddit,
-  aiSummary,
-  aiSummaryStructured,
-  posts,
-  onGenerateClick,
-  generateLabel,
-  generateDisabled,
-  aiGenerating,
-  onStopGenerate,
-  onViewPrompt,
-  isAdmin,
-  isArchive,
-}: {
-  subreddit: string;
-  aiSummary: string;
-  aiSummaryStructured: any[] | null;
-  posts: any[];
-  onGenerateClick: () => void;
-  generateLabel: string;
-  generateDisabled: boolean;
-  aiGenerating: boolean;
-  onStopGenerate: () => void;
-  onViewPrompt: () => void;
-  isAdmin: boolean;
-  isArchive: boolean;
-}) {
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const [isDragging, setIsDragging] = useState(false);
-  const [rightWidth, setRightWidth] = useState(420);
-  const HANDLE_WIDTH = 6;
-  const MIN_RIGHT = 320;
-  const MAX_RIGHT_PCT = 0.6;
-  const isMobile = useIsMobile();
-
-  useEffect(() => {
-    function onMove(e: MouseEvent) {
-      if (!isDragging || !containerRef.current) return;
-      const rect = containerRef.current.getBoundingClientRect();
-      const maxRight = rect.width * MAX_RIGHT_PCT;
-      const fromLeft = e.clientX - rect.left;
-      const newRight = Math.max(0, Math.min(maxRight, rect.width - fromLeft));
-      setRightWidth(newRight < MIN_RIGHT ? 0 : Math.max(MIN_RIGHT, newRight));
-    }
-    function onUp() { setIsDragging(false); }
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-    return () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-    };
-  }, [isDragging]);
-
-  const showPosts = rightWidth > 0;
-
-  const actionButtons = (
-    <>
-      {isAdmin && !isArchive && (
-        <Button size="sm" onClick={onGenerateClick} disabled={generateDisabled} className="h-8 px-2 text-xs">{generateLabel}</Button>
-      )}
-      {isAdmin && (
-        <Button size="sm" variant="outline" onClick={onViewPrompt} className="h-8 px-2 text-xs">View prompt</Button>
-      )}
-      {aiGenerating && (
-        <Button size="sm" variant="secondary" onClick={onStopGenerate} className="h-8 px-2 text-xs">Stop</Button>
-      )}
-    </>
-  );
-
-  const summaryContent = (
-    <>
-      {Array.isArray(aiSummaryStructured) && aiSummaryStructured.length > 0 ? (
-        <ul className="space-y-2">
-          {aiSummaryStructured.map((item, idx) => {
-            const ids: string[] = Array.isArray(item?.sourceId) ? item.sourceId : [];
-            const postId = ids[0];
-            const commentId = ids[1];
-            const href = commentId
-              ? `https://www.reddit.com/r/${subreddit}/comments/${postId}/comment/${commentId}`
-              : `https://www.reddit.com/r/${subreddit}/comments/${postId}`;
-            return (
-              <li key={idx} className="border rounded p-2 text-sm bg-background/40">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="font-medium">{item?.title || 'Untitled'}</div>
-                    {item?.desc && <div className="text-muted-foreground whitespace-pre-wrap">{item.desc}</div>}
-                  </div>
-                  {postId && (
-                    <Link href={href} target="_blank" aria-label="Open on Reddit" className="shrink-0 text-muted-foreground hover:text-foreground">
-                      <ExternalLink size={16} />
-                    </Link>
-                  )}
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      ) : (
-        aiSummary ? (
-          <div className="text-sm whitespace-pre-wrap">{aiSummary}</div>
-        ) : (
-          <div className="text-sm text-muted-foreground">No summary available.</div>
-        )
-      )}
-    </>
-  );
-
-  if (isMobile) {
-    return (
-      <div className="border rounded bg-card text-card-foreground">
-        <div className="p-2 flex items-center gap-1 justify-end">
-          {actionButtons}
-        </div>
-        <div className="p-3">
-          {summaryContent}
-        </div>
-        <div className="border-t p-3">
-          <RedditThreads subreddit={subreddit} posts={posts ?? []} />
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div ref={containerRef} className="relative grid border rounded bg-card text-card-foreground pt-12" style={{ gridTemplateColumns: `1fr ${HANDLE_WIDTH}px ${Math.max(rightWidth, 0)}px` }}>
-      <div className="absolute top-2 right-2 z-10 flex items-center gap-1">
-        {!showPosts && (
-          <Button size="sm" variant="secondary" onClick={() => setRightWidth(420)} className="h-8 px-2 text-xs">Show posts</Button>
-        )}
-        {actionButtons}
-      </div>
-      <div className="min-h-[400px] max-h-[70vh] overflow-auto p-3">
-        {summaryContent}
-      </div>
-
-      <div
-        role="separator"
-        aria-label="Resize posts panel"
-        className="cursor-col-resize bg-muted hover:bg-muted/80"
-        onMouseDown={() => setIsDragging(true)}
-      />
-
-      <div className={`min-h-[400px] max-h-[70vh] overflow-auto ${showPosts ? 'opacity-100' : 'opacity-0 pointer-events-none'} transition-opacity`}>
-        <div className="p-3">
-          <RedditThreads subreddit={subreddit} posts={posts ?? []} />
-        </div>
-      </div>
-    </div>
   );
 }

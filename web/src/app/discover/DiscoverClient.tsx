@@ -1,13 +1,11 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
-import { ExternalLink } from 'lucide-react';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { ExternalLink, ArrowRight } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 
 type Duration = '1d' | '1week' | '1month';
@@ -32,6 +30,18 @@ type FeedResponse = {
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000/api';
 
+const DURATION_SLUGS: Record<string, string> = {
+  '1d': 'day',
+  '1week': 'week',
+  '1month': 'month',
+};
+
+const DURATIONS = [
+  { value: '1d' as Duration, label: 'Day' },
+  { value: '1week' as Duration, label: 'Week' },
+  { value: '1month' as Duration, label: 'Month' },
+];
+
 interface DiscoverClientProps {
   initialItems: FeedItem[];
   initialDuration: Duration;
@@ -43,7 +53,6 @@ export default function DiscoverClient({ initialItems, initialDuration }: Discov
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Fetch when duration changes or if SSR returned no items
   useEffect(() => {
     if (duration === initialDuration && items.length > 0) return;
 
@@ -71,109 +80,99 @@ export default function DiscoverClient({ initialItems, initialDuration }: Discov
   }, [duration]);
 
   return (
-    <main className="container mx-auto p-8 space-y-6">
+    <main className="container mx-auto px-6 py-8 space-y-8">
       <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold">Discover</h1>
-        <div className="w-48">
-          <Select value={duration} onValueChange={(v) => setDuration(v as Duration)}>
-            <SelectTrigger>
-              <SelectValue placeholder="Select period" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="1d">Last day</SelectItem>
-              <SelectItem value="1week">Last week</SelectItem>
-              <SelectItem value="1month">Last month</SelectItem>
-            </SelectContent>
-          </Select>
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Discover</h1>
+          <p className="text-muted-foreground mt-1">Browse AI-powered summaries from tracked communities</p>
+        </div>
+        <div className="flex items-center rounded-lg border bg-muted/50 p-0.5">
+          {DURATIONS.map(({ value, label }) => (
+            <button
+              key={value}
+              onClick={() => setDuration(value)}
+              className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${
+                duration === value
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
         </div>
       </div>
 
-      {loading && <div className="text-sm text-gray-500">Loading feed...</div>}
-      {error && <div className="text-sm text-red-600">{error}</div>}
-      {!loading && !error && items.length === 0 && (
-        <div className="text-sm text-gray-500">No cached posts found for this period.</div>
+      {loading && (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="h-80 bg-muted animate-pulse rounded-xl" />
+          ))}
+        </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      {error && <div className="text-sm text-destructive">{error}</div>}
+
+      {!loading && !error && items.length === 0 && (
+        <div className="text-center py-16 text-muted-foreground">
+          No cached posts found for this period.
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
         {items.map((item) => {
           const hasStructured = Array.isArray(item.ai_summary_structured) && item.ai_summary_structured.length > 0;
           const hasSummary = typeof item.ai_summary === 'string' && item.ai_summary.trim().length > 0;
           const hasTopPosts = Array.isArray(item.top_posts) && item.top_posts.length > 0;
-          const showReadMore = (
-            (hasStructured && (item.ai_summary_structured!.length > 3 || (item.ai_summary_structured![0]?.desc || '').length > 160)) ||
-            (hasSummary && (item.ai_summary!.length > 300)) ||
-            (hasTopPosts && item.top_posts.length > 4)
-          );
+          const slug = DURATION_SLUGS[item.period] || 'week';
+
           return (
-            <Card key={`${item.subreddit}-${item.period}`} className="h-96 flex flex-col">
-              <CardHeader className="pb-2 shrink-0">
-                <div className="flex items-center gap-2">
-                  <Badge variant="secondary">r/{item.subreddit}</Badge>
-                  <span className="text-xs text-gray-500">{item.period}</span>
+            <Link
+              key={`${item.subreddit}-${item.period}`}
+              href={`/r/${item.subreddit}/${slug}`}
+              className="group block"
+            >
+              <div className="h-80 flex flex-col border rounded-xl bg-card hover:border-foreground/20 hover:shadow-md transition-all overflow-hidden">
+                <div className="px-4 pt-4 pb-2 shrink-0">
+                  <div className="flex items-center justify-between">
+                    <Badge variant="secondary" className="font-medium">r/{item.subreddit}</Badge>
+                    <ArrowRight size={14} className="text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                  </div>
                   {item.cachedAt && (
-                    <span className="text-xs text-gray-400">Cached {new Date(item.cachedAt).toLocaleString()}</span>
+                    <p className="text-xs text-muted-foreground mt-1.5">
+                      {new Date(item.cachedAt).toLocaleDateString()}
+                    </p>
                   )}
                 </div>
-                <CardTitle className="text-lg">Top posts</CardTitle>
-                <CardDescription>Showing cached results for the selected period</CardDescription>
-              </CardHeader>
-              <CardContent className="pt-0 flex-1 overflow-hidden relative">
-                {hasStructured ? (
-                  <ul className="space-y-2 pr-1">
-                    {item.ai_summary_structured!.slice(0, 5).map((s, idx) => {
-                      const ids = Array.isArray(s?.sourceId) ? s.sourceId : [];
-                      const postId = ids[0];
-                      const commentId = ids[1];
-                      const href = commentId
-                        ? `https://www.reddit.com/r/${item.subreddit}/comments/${postId}/comment/${commentId}`
-                        : `https://www.reddit.com/r/${item.subreddit}/comments/${postId}`;
-                      return (
-                        <li key={idx} className="text-sm border rounded p-2">
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <div className="font-medium truncate">{s?.title || 'Untitled'}</div>
-                              {s?.desc && <div className="text-gray-700 whitespace-pre-wrap max-h-28 overflow-hidden">{s.desc}</div>}
-                            </div>
-                            {postId && (
-                              <Link href={href} target="_blank" aria-label="Open on Reddit" className="shrink-0 text-gray-500 hover:text-gray-700">
-                                <ExternalLink size={16} />
-                              </Link>
-                            )}
-                          </div>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                ) : hasSummary ? (
-                  <div className="prose prose-sm max-h-full overflow-hidden pr-1">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.ai_summary!}</ReactMarkdown>
-                  </div>
-                ) : hasTopPosts ? (
-                  <ul className="list-disc pl-5 space-y-2 pr-1">
-                    {item.top_posts!.slice(0, 5).map((p, idx) => (
-                      <li key={idx} className="text-sm">
-                        <span className="font-medium">{p.title}</span>
-                        {Array.isArray(p.comments) && (
-                          <span className="text-gray-500"> {' '} {p.comments.length} comments</span>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <div className="text-sm text-gray-500">No posts available.</div>
-                )}
 
-                {showReadMore && (
-                  <div className="absolute inset-x-0 bottom-0 pt-8 pb-2 px-2 bg-gradient-to-t from-background to-transparent">
-                    <div className="flex justify-end">
-                      <Link href={`/r/${item.subreddit}/${({ '1d': 'day', '1week': 'week', '1month': 'month' } as Record<string, string>)[item.period] || 'week'}`}>
-                        <Button size="sm" variant="secondary">Read more</Button>
-                      </Link>
+                <div className="px-4 pb-4 flex-1 overflow-hidden relative">
+                  {hasStructured ? (
+                    <ul className="space-y-2">
+                      {item.ai_summary_structured!.slice(0, 4).map((s, idx) => (
+                        <li key={idx} className="text-sm">
+                          <div className="font-medium truncate">{s?.title || 'Untitled'}</div>
+                          {s?.desc && <div className="text-muted-foreground line-clamp-2 text-xs mt-0.5">{s.desc}</div>}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : hasSummary ? (
+                    <div className="prose prose-sm max-h-full overflow-hidden text-sm text-muted-foreground">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.ai_summary!}</ReactMarkdown>
                     </div>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+                  ) : hasTopPosts ? (
+                    <ul className="space-y-1.5">
+                      {item.top_posts!.slice(0, 5).map((p, idx) => (
+                        <li key={idx} className="text-sm truncate">{p.title}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <div className="text-sm text-muted-foreground">No posts available.</div>
+                  )}
+
+                  <div className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-card to-transparent pointer-events-none" />
+                </div>
+              </div>
+            </Link>
           );
         })}
       </div>
