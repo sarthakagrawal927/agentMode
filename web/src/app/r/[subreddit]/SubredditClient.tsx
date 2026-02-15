@@ -85,6 +85,40 @@ export default function SubredditClient({
     return () => clearInterval(interval);
   }, []);
 
+  // If SSR timed out and we have no data, fetch client-side
+  useEffect(() => {
+    if (researchInfo) return;
+    const fetchClientSide = async () => {
+      try {
+        setPostsLoading(true);
+        const isDate = /^\d{4}-\d{2}-\d{2}$/.test(period);
+        let data;
+        if (isDate) {
+          const resp = await fetch(
+            `${API_BASE_URL}/research/subreddit/${encodeURIComponent(subreddit)}/snapshot/${period}`,
+          );
+          data = resp.ok ? await resp.json() : null;
+        } else {
+          const duration = PERIOD_MAP[period] || '1week';
+          data = await api.subredditResearch({ subreddit_name: subreddit, duration: duration as any });
+        }
+        if (data) {
+          setResearchInfo(data);
+          if (Array.isArray(data.ai_summary_structured)) setAiSummaryStructured(data.ai_summary_structured);
+          if (typeof data.ai_summary === 'string') setAiSummary(data.ai_summary);
+          if (typeof data.ai_prompt_used === 'string') setAiPromptUsed(data.ai_prompt_used);
+        }
+      } catch (err) {
+        console.error('Client-side fetch failed:', err);
+        setError('Failed to load subreddit data');
+      } finally {
+        setPostsLoading(false);
+      }
+    };
+    fetchClientSide();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subreddit, period]);
+
   // Fetch Reddit info client-side (Reddit blocks server IPs)
   useEffect(() => {
     const fetchAbout = async () => {

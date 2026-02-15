@@ -23,6 +23,13 @@ interface PageProps {
   params: { subreddit: string; period: string };
 }
 
+// SSR fetches with 5s timeout — if backend is cold, return null and let client hydrate
+function withTimeout(ms: number): AbortSignal {
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), ms);
+  return controller.signal;
+}
+
 async function fetchResearch(subreddit: string, duration: string) {
   try {
     const resp = await fetch(`${API_BASE_URL}/research/subreddit`, {
@@ -30,6 +37,7 @@ async function fetchResearch(subreddit: string, duration: string) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ subreddit_name: subreddit, duration }),
       next: { revalidate: 86400 },
+      signal: withTimeout(5000),
     });
     if (!resp.ok) return null;
     return resp.json();
@@ -42,7 +50,7 @@ async function fetchSnapshot(subreddit: string, date: string) {
   try {
     const resp = await fetch(
       `${API_BASE_URL}/research/subreddit/${encodeURIComponent(subreddit)}/snapshot/${date}`,
-      { next: { revalidate: 86400 } },
+      { next: { revalidate: 86400 }, signal: withTimeout(5000) },
     );
     if (!resp.ok) return null;
     return resp.json();
@@ -55,7 +63,7 @@ async function fetchPrompt(subreddit: string) {
   try {
     const resp = await fetch(
       `${API_BASE_URL}/prompts/${encodeURIComponent(subreddit)}`,
-      { next: { revalidate: 86400 } },
+      { next: { revalidate: 86400 }, signal: withTimeout(5000) },
     );
     if (!resp.ok) return null;
     return resp.json();
@@ -68,7 +76,7 @@ async function fetchDates(subreddit: string): Promise<string[]> {
   try {
     const resp = await fetch(
       `${API_BASE_URL}/research/subreddit/${encodeURIComponent(subreddit)}/dates`,
-      { next: { revalidate: 86400 } },
+      { next: { revalidate: 86400 }, signal: withTimeout(5000) },
     );
     if (!resp.ok) return [];
     const data = await resp.json();
