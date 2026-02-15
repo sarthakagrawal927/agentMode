@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 load_dotenv()
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,8 +12,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from reddit import get_top_posts_for_topic, get_top_posts_for_subreddit
 from llm_api import execute_chat_completion, client
 import json
-from cache import get_cache, set_cache, one_day_ttl_seconds
+from cache import get_cache, set_cache, one_day_ttl_seconds, save_snapshot, get_snapshot, list_snapshot_dates
 from db import init_db, close_db, get_pool
+from auth import require_admin
 from datetime import datetime, timezone
 from fastapi.responses import StreamingResponse
 
@@ -121,8 +122,50 @@ async def research_subreddit(data: dict):
 
         await set_cache(SUBREDDIT_CACHE_NAMESPACE, cache_key, result, one_day_ttl_seconds)
 
+        # Archive today's snapshot
+        try:
+            await save_snapshot(subreddit_name, duration, result)
+        except Exception:
+            pass  # best-effort
+
         return result
 
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Snapshot endpoints
+@app.get("/api/research/subreddit/{subreddit}/snapshot/{date}")
+async def get_subreddit_snapshot(subreddit: str, date: str, period: str | None = None):
+    try:
+        data = await get_snapshot(subreddit, date, period)
+        if data is not None:
+            return data
+
+        # No snapshot exists — fetch fresh data and save it
+        duration = period or "1week"
+        result = {
+            "subreddit": subreddit,
+            "period": duration,
+            "cachedAt": datetime.now(timezone.utc).isoformat(),
+            "top_posts": await get_top_posts_for_subreddit(subreddit, 20, duration),
+        }
+        try:
+            await save_snapshot(subreddit, duration, result)
+        except Exception:
+            pass
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/research/subreddit/{subreddit}/dates")
+async def get_subreddit_dates(subreddit: str):
+    try:
+        dates = await list_snapshot_dates(subreddit)
+        return {"subreddit": subreddit, "dates": dates}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -211,7 +254,7 @@ async def list_prompts():
 
 # Streaming AI summary for subreddit data
 @app.post("/api/research/subreddit/summary/stream")
-async def subreddit_summary_stream(data: dict):
+async def subreddit_summary_stream(data: dict, admin_email: str = Depends(require_admin)):
     try:
         subreddit_name = (data.get("subreddit_name") or "").strip()
         duration = data.get("duration", "1week")
@@ -353,6 +396,11 @@ async def subreddit_summary_stream(data: dict):
                             base,
                             one_day_ttl_seconds,
                         )
+                        # Update today's snapshot with AI summary
+                        try:
+                            await save_snapshot(subreddit_name, duration, base)
+                        except Exception:
+                            pass
                 except Exception:
                     # Best-effort cache write; ignore failures
                     pass
@@ -387,7 +435,7 @@ class SavePromptRequest(BaseModel):
 
 
 @app.post("/api/prompts/{subreddit}")
-async def save_subreddit_prompt(subreddit: str, data: SavePromptRequest):
+async def save_subreddit_prompt(subreddit: str, data: SavePromptRequest, admin_email: str = Depends(require_admin)):
     try:
         s = subreddit.strip()
         new_prompt = (data.prompt or "").strip()

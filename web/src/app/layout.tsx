@@ -1,10 +1,12 @@
 import { Inter } from "next/font/google";
+import Script from "next/script";
 import "./globals.css";
 import { metadata } from "./metadata";
 import { Toaster } from "@/components/ui/toaster";
 import Link from "next/link";
 import { ThemeProvider } from "@/components/theme-provider";
 import ThemeToggle from "@/components/ThemeToggle";
+import AuthButton from "@/components/AuthButton";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -20,6 +22,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className={inter.className}>
+      <Script src="https://accounts.google.com/gsi/client" strategy="afterInteractive" />
       <body className="min-h-screen bg-background">
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
         <header className="border-b bg-background">
@@ -31,6 +34,7 @@ export default function RootLayout({
               <Link href="/discover" className="text-sm px-3 py-1 rounded border hover:bg-accent">
                 Discover
               </Link>
+              <AuthButton />
               <ThemeToggle />
             </nav>
           </div>

@@ -45,7 +45,7 @@ export default async function Home() {
             {sampleSubreddits.map((s) => (
               <Link
                 key={s}
-                href={`/r/${s}`}
+                href={`/r/${s}/week`}
                 className="px-3 py-1 border rounded hover:bg-accent hover:text-accent-foreground"
               >
                 r/{s}

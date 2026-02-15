@@ -20,6 +20,17 @@ CREATE TABLE IF NOT EXISTS prompts (
     subreddit VARCHAR(255) UNIQUE NOT NULL,
     prompt    TEXT                NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS snapshots (
+    subreddit  VARCHAR(255) NOT NULL,
+    snap_date  DATE         NOT NULL,
+    period     VARCHAR(20)  NOT NULL,
+    data       JSONB        NOT NULL,
+    created_at TIMESTAMPTZ  DEFAULT NOW(),
+    UNIQUE (subreddit, snap_date, period)
+);
+CREATE INDEX IF NOT EXISTS idx_snapshots_sub_date
+    ON snapshots (subreddit, snap_date DESC);
 """
 
 

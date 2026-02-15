@@ -27,7 +27,7 @@ const SubredditForm = () => {
       return null;
     },
     onSubmit: async (data) => {
-      router.push(`/r/${data.subreddit}`);
+      router.push(`/r/${data.subreddit}/week`);
     },
     successMessage: "Redirecting to subreddit...",
   });

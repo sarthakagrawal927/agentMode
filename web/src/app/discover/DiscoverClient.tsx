@@ -166,7 +166,7 @@ export default function DiscoverClient({ initialItems, initialDuration }: Discov
                 {showReadMore && (
                   <div className="absolute inset-x-0 bottom-0 pt-8 pb-2 px-2 bg-gradient-to-t from-background to-transparent">
                     <div className="flex justify-end">
-                      <Link href={`/r/${item.subreddit}?period=${item.period}`}>
+                      <Link href={`/r/${item.subreddit}/${({ '1d': 'day', '1week': 'week', '1month': 'month' } as Record<string, string>)[item.period] || 'week'}`}>
                         <Button size="sm" variant="secondary">Read more</Button>
                       </Link>
                     </div>
