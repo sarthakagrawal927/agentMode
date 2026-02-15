@@ -1,5 +1,6 @@
 import json
 import os
+import ssl
 from pathlib import Path
 
 import asyncpg
@@ -27,7 +28,9 @@ async def init_db() -> None:
     database_url = os.environ.get("DATABASE_URL")
     if not database_url:
         raise RuntimeError("DATABASE_URL environment variable is not set")
-    _pool = await asyncpg.create_pool(database_url, min_size=2, max_size=10)
+    # CockroachDB requires SSL; use system CA bundle so it works on any host
+    ssl_ctx = ssl.create_default_context()
+    _pool = await asyncpg.create_pool(database_url, min_size=2, max_size=10, ssl=ssl_ctx)
     async with _pool.acquire() as conn:
         await conn.execute(_SCHEMA_SQL)
     await _seed_prompts_if_needed()
