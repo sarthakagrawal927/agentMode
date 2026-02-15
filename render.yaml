@@ -19,7 +19,7 @@ services:
 
   # ── Frontend (Next.js) ──
   - type: web
-    name: agentdata-web
+    name: agent-mode
     env: node
     rootDir: web
     buildCommand: npm ci && npm run build

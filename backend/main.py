@@ -7,8 +7,8 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
 from fastapi.middleware.cors import CORSMiddleware
-from linkedinProfileExtractor import LinkedinProfile
-from jobScraper import getJobDescriptions
+# from linkedinProfileExtractor import LinkedinProfile
+# from jobScraper import getJobDescriptions
 from reddit import get_top_posts_for_topic, get_top_posts_for_subreddit
 from llm_api import execute_chat_completion, client
 import json
@@ -77,40 +77,10 @@ async def _write_prompt_map(subreddit: str, prompt: str) -> None:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ARCHIVED: Legacy role research endpoint (kept for reference)
-@app.post("/api/research")
-async def create_research(request: ResearchRequest):
-    try:
-        # find top posts for industry context
-        reddit_top_posts = []
-        if request.industry_context:
-            reddit_top_posts = await get_top_posts_for_topic(request.industry_context)
-
-        # Get LinkedIn profiles
-        linkedInProfiles = []
-        for url in request.linkedin_urls:
-            profile = LinkedinProfile(url.split("/")[4])
-            linkedInProfiles.append(profile.getProfile())
-
-        # Get job descriptions
-        jobDescriptions = getJobDescriptions([request.role_title])
-
-        return {
-            "status": "success",
-            "message": "Research request received",
-            "data": await execute_chat_completion(
-                json.dumps(
-                    {
-                        "profiles": linkedInProfiles,
-                        "jd": jobDescriptions,
-                        "reddit": reddit_top_posts,
-                    }
-                )
-            ),
-        }
-    except Exception as e:
-        print(e)
-        raise HTTPException(status_code=500, detail=str(e))
+# ARCHIVED: Legacy role research endpoint (disabled — LinkedIn/jobScraper deps removed)
+# @app.post("/api/research")
+# async def create_research(request: ResearchRequest):
+#     ...
 
 
 @app.post("/api/research/subreddit")
