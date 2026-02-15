@@ -419,7 +419,7 @@ function SplitSummaryPosts({
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [isDragging, setIsDragging] = useState(false);
-  const [rightWidth, setRightWidth] = useState(0);
+  const [rightWidth, setRightWidth] = useState(420);
   const HANDLE_WIDTH = 6;
   const MIN_RIGHT = 320;
   const MAX_RIGHT_PCT = 0.6;
