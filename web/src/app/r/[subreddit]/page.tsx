@@ -44,13 +44,27 @@ export default function SubredditPage({
   const [aiPromptUsed, setAiPromptUsed] = useState<string | null>(null);
   const [promptDialogOpen, setPromptDialogOpen] = useState<boolean>(false);
 
-  // Fetch static subreddit info (about) once per subreddit
+  // Fetch static subreddit info (about) once per subreddit — direct from Reddit
   useEffect(() => {
     const fetchAbout = async () => {
       try {
-        const redditResponse = await fetch(`/api/r/${params.subreddit}`);
+        const redditResponse = await fetch(
+          `https://www.reddit.com/r/${params.subreddit}/about.json`,
+          { headers: { 'User-Agent': 'SubredditResearch/1.0.0' } }
+        );
         if (!redditResponse.ok) throw new Error('Failed to fetch Reddit data');
-        const redditData = await redditResponse.json();
+        const raw = await redditResponse.json();
+        const d = raw?.data;
+        const redditData = {
+          name: d?.display_name,
+          title: d?.title,
+          description: d?.public_description,
+          subscribers: d?.subscribers,
+          activeUsers: d?.active_user_count,
+          created: d?.created_utc ? new Date(d.created_utc * 1000).toISOString() : null,
+          nsfw: d?.over18,
+          url: `https://reddit.com/r/${params.subreddit}`,
+        };
         setData((prev) => ({
           redditInfo: redditData,
           researchInfo: prev?.researchInfo,
