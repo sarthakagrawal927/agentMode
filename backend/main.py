@@ -1,8 +1,10 @@
 from dotenv import load_dotenv
 
 load_dotenv()
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, HttpUrl, constr
+from pydantic import BaseModel
 from typing import List, Optional
 from fastapi.middleware.cors import CORSMiddleware
 from linkedinProfileExtractor import LinkedinProfile
@@ -11,11 +13,19 @@ from reddit import get_top_posts_for_topic, get_top_posts_for_subreddit
 from llm_api import execute_chat_completion, client
 import json
 from cache import get_cache, set_cache, one_day_ttl_seconds
+from db import init_db, close_db, get_pool
 from datetime import datetime, timezone
-from pathlib import Path
 from fastapi.responses import StreamingResponse
 
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await init_db()
+    yield
+    await close_db()
+
+
+app = FastAPI(lifespan=lifespan)
 
 # Enable CORS for development
 app.add_middleware(
@@ -35,29 +45,34 @@ class ResearchRequest(BaseModel):
 
 SUBREDDIT_CACHE_NAMESPACE = "subreddit_research"
 
-# File-backed prompt store
-PROMPTS_FILE = Path(__file__).parent / "prompts.json"
 DEFAULT_PROMPT = (
     "Analyze top posts and comments for r/{subreddit}. "
     "Summarize key themes, actionable insights, and representative quotes."
 )
 
 
-def _read_prompt_map() -> dict:
+async def _read_prompt_map() -> dict:
     try:
-        if PROMPTS_FILE.exists():
-            with PROMPTS_FILE.open("r", encoding="utf-8") as fh:
-                data = json.load(fh)
-                return data if isinstance(data, dict) else {}
+        pool = get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch("SELECT subreddit, prompt FROM prompts")
+        return {row["subreddit"]: row["prompt"] for row in rows}
     except Exception:
-        pass
-    return {}
+        return {}
 
 
-def _write_prompt_map(prompts: dict) -> None:
+async def _write_prompt_map(subreddit: str, prompt: str) -> None:
     try:
-        with PROMPTS_FILE.open("w", encoding="utf-8") as fh:
-            json.dump(prompts or {}, fh, ensure_ascii=False, indent=2)
+        pool = get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO prompts (subreddit, prompt) VALUES ($1, $2)
+                ON CONFLICT (subreddit) DO UPDATE SET prompt = EXCLUDED.prompt
+                """,
+                subreddit,
+                prompt,
+            )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -120,7 +135,7 @@ async def research_subreddit(data: dict):
         )
 
         # Return cached value if valid
-        cached = get_cache(SUBREDDIT_CACHE_NAMESPACE, cache_key)
+        cached = await get_cache(SUBREDDIT_CACHE_NAMESPACE, cache_key)
         if cached:
             return cached
 
@@ -134,7 +149,7 @@ async def research_subreddit(data: dict):
             ),
         }
 
-        set_cache(SUBREDDIT_CACHE_NAMESPACE, cache_key, result, one_day_ttl_seconds)
+        await set_cache(SUBREDDIT_CACHE_NAMESPACE, cache_key, result, one_day_ttl_seconds)
 
         return result
 
@@ -148,6 +163,20 @@ async def read_root():
     return {"status": "API is running"}
 
 
+@app.get("/health")
+async def health_check():
+    try:
+        pool = get_pool()
+        async with pool.acquire() as conn:
+            await conn.fetchval("SELECT 1")
+        return {"status": "healthy", "database": "connected"}
+    except Exception as e:
+        raise HTTPException(
+            status_code=503,
+            detail={"status": "unhealthy", "database": str(e)},
+        )
+
+
 # Feed endpoint: return all cached subreddit results for a given duration
 @app.get("/api/research/subreddit/feed")
 async def subreddit_feed(duration: str = "1week"):
@@ -157,66 +186,43 @@ async def subreddit_feed(duration: str = "1week"):
         if duration not in allowed:
             duration = "1week"
 
-        # Locate subreddit cache directory
-        cache_root = Path(__file__).parent / ".cache" / SUBREDDIT_CACHE_NAMESPACE
-        items = []
+        pool = get_pool()
         now = datetime.now(timezone.utc)
-        if cache_root.exists():
-            for f in cache_root.glob("*.json"):
-                try:
-                    with f.open("r", encoding="utf-8") as fh:
-                        doc = json.load(fh)
-                    if not isinstance(doc, dict):
-                        continue
-                    bucket = doc.get(duration) or {}
-                    if not isinstance(bucket, dict) or not bucket:
-                        continue
-                    # choose the highest available limit entry (unexpired only)
-                    best_entry = None
-                    best_limit = -1
-                    expired_keys = []
-                    for k, v in bucket.items():
-                        if not isinstance(v, dict):
-                            continue
-                        if not k.startswith("limit="):
-                            continue
-                        # Skip expired entries and mark for pruning
-                        try:
-                            exp = v.get("expires_at")
-                            exp_dt = (
-                                datetime.fromisoformat(exp)
-                                if isinstance(exp, str)
-                                else None
-                            )
-                        except Exception:
-                            exp_dt = None
-                        if not exp_dt or exp_dt <= now:
-                            expired_keys.append(k)
-                            continue
-                        try:
-                            lim = int(k.split("=", 1)[1])
-                        except Exception:
-                            lim = 0
-                        if lim > best_limit:
-                            best_limit = lim
-                            best_entry = v
-                    # Prune expired keys from the file if any
-                    if expired_keys:
-                        try:
-                            for ek in expired_keys:
-                                bucket.pop(ek, None)
-                            with f.open("w", encoding="utf-8") as outfh:
-                                json.dump(doc, outfh, ensure_ascii=False)
-                        except Exception:
-                            pass
 
-                    if best_entry and isinstance(best_entry.get("data"), dict):
-                        items.append(
-                            best_entry["data"]
-                        )  # includes subreddit, cachedAt, top_posts
-                except Exception:
-                    # Ignore malformed files
-                    continue
+        # Query all non-expired cache entries for the subreddit namespace
+        # The key format is: "<subreddit>::limit=<N>::duration=<D>"
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT key, data FROM cache_entries
+                WHERE namespace = $1
+                  AND key LIKE $2
+                  AND expires_at > $3
+                """,
+                SUBREDDIT_CACHE_NAMESPACE,
+                f"%::duration={duration}",
+                now,
+            )
+
+        # Group by subreddit (first segment of key) and pick the highest limit
+        best_by_subreddit: dict = {}
+        for row in rows:
+            data = json.loads(row["data"])
+            if not isinstance(data, dict):
+                continue
+            key_str: str = row["key"]
+            subreddit = key_str.split("::")[0]
+            # Extract limit from key
+            try:
+                limit_part = [p for p in key_str.split("::") if p.startswith("limit=")][0]
+                limit_val = int(limit_part.split("=")[1])
+            except Exception:
+                limit_val = 0
+            existing = best_by_subreddit.get(subreddit)
+            if existing is None or limit_val > existing[0]:
+                best_by_subreddit[subreddit] = (limit_val, data)
+
+        items = [entry[1] for entry in best_by_subreddit.values()]
 
         return {"duration": duration, "items": items}
     except Exception as e:
@@ -227,7 +233,7 @@ async def subreddit_feed(duration: str = "1week"):
 @app.get("/api/prompts")
 async def list_prompts():
     try:
-        prompts = _read_prompt_map()
+        prompts = await _read_prompt_map()
         return {"defaultPrompt": DEFAULT_PROMPT, "prompts": prompts}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -252,7 +258,7 @@ async def subreddit_summary_stream(data: dict):
         if override_prompt:
             system_prompt = override_prompt
         else:
-            prompts = _read_prompt_map()
+            prompts = await _read_prompt_map()
             raw = prompts.get(subreddit_name)
             if isinstance(raw, str) and raw.strip():
                 system_prompt = raw
@@ -275,7 +281,7 @@ async def subreddit_summary_stream(data: dict):
         cache_key = (
             f"{subreddit_name.strip().lower()}::limit={limit}::duration={duration}"
         )
-        cached_data = get_cache(SUBREDDIT_CACHE_NAMESPACE, cache_key)
+        cached_data = await get_cache(SUBREDDIT_CACHE_NAMESPACE, cache_key)
         if isinstance(cached_data, dict):
             cached_prompt = cached_data.get("ai_prompt_used")
             cached_struct = cached_data.get("ai_summary_structured")
@@ -352,7 +358,7 @@ async def subreddit_summary_stream(data: dict):
                     text = "".join(full_text)
                     if text:
                         # Merge into existing cached data if present; otherwise build a minimal structure
-                        base = get_cache(SUBREDDIT_CACHE_NAMESPACE, cache_key)
+                        base = await get_cache(SUBREDDIT_CACHE_NAMESPACE, cache_key)
                         if not isinstance(base, dict):
                             base = {
                                 "subreddit": subreddit_name,
@@ -371,7 +377,7 @@ async def subreddit_summary_stream(data: dict):
                         except Exception:
                             base["ai_summary"] = text
                         base["ai_prompt_used"] = system_prompt
-                        set_cache(
+                        await set_cache(
                             SUBREDDIT_CACHE_NAMESPACE,
                             cache_key,
                             base,
@@ -395,7 +401,7 @@ async def subreddit_summary_stream(data: dict):
 async def get_subreddit_prompt(subreddit: str):
     try:
         s = subreddit.strip()
-        prompts = _read_prompt_map()
+        prompts = await _read_prompt_map()
         value = prompts.get(s)
         if isinstance(value, str) and value.strip():
             return {"subreddit": s, "prompt": value, "isDefault": False}
@@ -417,9 +423,7 @@ async def save_subreddit_prompt(subreddit: str, data: SavePromptRequest):
         new_prompt = (data.prompt or "").strip()
         if not new_prompt:
             raise HTTPException(status_code=400, detail="Prompt must be non-empty")
-        prompts = _read_prompt_map()
-        prompts[s] = new_prompt
-        _write_prompt_map(prompts)
+        await _write_prompt_map(s, new_prompt)
         return {"status": "ok", "subreddit": s, "prompt": new_prompt}
     except HTTPException:
         raise
