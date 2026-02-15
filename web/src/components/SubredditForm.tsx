@@ -1,3 +1,5 @@
+'use client';
+
 import { api } from "@/services/api";
 import { useFormHandler } from "@/hooks/use-form-handler";
 import { Button } from "@/components/ui/button";
