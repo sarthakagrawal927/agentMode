@@ -36,6 +36,7 @@ type SummaryItem = {
   title?: string;
   desc?: string;
   sourceId?: string[];
+  link?: string;
 };
 
 type SummaryStructured = {
@@ -83,6 +84,12 @@ function toSourceLink(subreddit: string, sourceId: unknown): string | null {
   return `https://www.reddit.com/r/${subreddit}/comments/${postId}`;
 }
 
+function resolveSummaryItemLink(subreddit: string, item: SummaryItem | null | undefined): string | null {
+  const explicitLink = `${item?.link ?? ''}`.trim();
+  if (/^https?:\/\//i.test(explicitLink)) return explicitLink;
+  return toSourceLink(subreddit, item?.sourceId);
+}
+
 function extractTakeaway(summaryText: string): string | null {
   const normalized = summaryText.trim();
   if (!normalized) return null;
@@ -99,7 +106,13 @@ function normalizeSummaryItem(value: unknown): SummaryItem | null {
   const sourceId = Array.isArray(raw.sourceId)
     ? raw.sourceId.map((item) => `${item ?? ''}`.trim()).filter(Boolean).slice(0, 2)
     : [];
-  return { title, desc, sourceId };
+  const link = `${raw.link ?? ''}`.trim();
+  return {
+    title,
+    desc,
+    sourceId,
+    link: /^https?:\/\//i.test(link) ? link : undefined,
+  };
 }
 
 function deriveKeyActionFromItem(item: SummaryItem | null): SummaryItem | null {
@@ -439,7 +452,8 @@ export default function SubredditClient({
   const keyAction = aiSummaryStructured?.key_action;
   const fallbackSummary = aiSummary.trim();
   const actionableTakeaway = keyAction?.desc || extractTakeaway(fallbackSummary);
-  const keyActionSourceHref = toSourceLink(subreddit, keyAction?.sourceId);
+  const keyTrendSourceHref = resolveSummaryItemLink(subreddit, keyTrend);
+  const keyActionSourceHref = resolveSummaryItemLink(subreddit, keyAction);
 
   return (
     <main className="mx-auto w-full max-w-[1240px] px-4 pb-10 pt-8 sm:px-6 lg:px-8">
@@ -513,12 +527,33 @@ export default function SubredditClient({
 
               <div className="mt-7 space-y-7">
                 <section>
-                  <h3 className="text-[1.35rem] font-semibold tracking-tight text-[#edf4ff]">
-                    {keyTrend?.title || 'Key Trends in Engineering Culture'}
-                  </h3>
-                  <p className="mt-3 text-[1.03rem] leading-relaxed text-[#becde7]">
-                    {keyTrend?.desc || fallbackSummary || 'No summary available for this snapshot.'}
-                  </p>
+                  {keyTrendSourceHref ? (
+                    <Link
+                      href={keyTrendSourceHref}
+                      target="_blank"
+                      className="group block rounded-lg border border-[#1a2d48] bg-[#081425] p-4 transition-colors hover:border-[#2f75ff] hover:bg-[#0c1c33]"
+                    >
+                      <h3 className="text-[1.35rem] font-semibold tracking-tight text-[#edf4ff] group-hover:text-[#ffffff]">
+                        {keyTrend?.title || 'Key Trends in Engineering Culture'}
+                      </h3>
+                      <p className="mt-3 text-[1.03rem] leading-relaxed text-[#becde7]">
+                        {keyTrend?.desc || fallbackSummary || 'No summary available for this snapshot.'}
+                      </p>
+                      <span className="mt-3 inline-flex items-center gap-1 text-sm text-[#7db0ff] group-hover:text-[#a9cbff]">
+                        Open post
+                        <ExternalLink size={12} />
+                      </span>
+                    </Link>
+                  ) : (
+                    <>
+                      <h3 className="text-[1.35rem] font-semibold tracking-tight text-[#edf4ff]">
+                        {keyTrend?.title || 'Key Trends in Engineering Culture'}
+                      </h3>
+                      <p className="mt-3 text-[1.03rem] leading-relaxed text-[#becde7]">
+                        {keyTrend?.desc || fallbackSummary || 'No summary available for this snapshot.'}
+                      </p>
+                    </>
+                  )}
                 </section>
 
                 <section>
@@ -526,27 +561,32 @@ export default function SubredditClient({
                   {notableDiscussions.length > 0 ? (
                     <ul className="mt-3 space-y-3 text-[1.02rem] text-[#becde7]">
                       {notableDiscussions.map((item, idx) => {
-                        const sourceHref = toSourceLink(subreddit, item?.sourceId);
+                        const sourceHref = resolveSummaryItemLink(subreddit, item);
+                        const title = item?.title || 'Untitled';
+                        const desc = item?.desc || 'No detail provided.';
                         return (
-                          <li key={`${item?.title || 'summary'}-${idx}`} className="flex gap-3">
-                            <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-[#6ea8ff]" />
-                            <p className="leading-relaxed">
-                              <span className="font-semibold text-[#e4eeff]">{item?.title || 'Untitled'}:</span>{' '}
-                              {item?.desc || 'No detail provided.'}
-                              {sourceHref && (
-                                <>
-                                  {' '}
-                                  <Link
-                                    href={sourceHref}
-                                    target="_blank"
-                                    className="inline-flex items-center gap-1 text-[#7db0ff] hover:text-[#9ec3ff]"
-                                  >
-                                    from r/{subreddit}
-                                    <ExternalLink size={12} />
-                                  </Link>
-                                </>
-                              )}
-                            </p>
+                          <li key={`${item?.title || 'summary'}-${idx}`}>
+                            {sourceHref ? (
+                              <Link
+                                href={sourceHref}
+                                target="_blank"
+                                className="group block rounded-lg border border-[#1a2d48] bg-[#081425] p-4 transition-colors hover:border-[#2f75ff] hover:bg-[#0c1c33]"
+                              >
+                                <p className="leading-relaxed">
+                                  <span className="font-semibold text-[#e4eeff]">{title}:</span> {desc}
+                                </p>
+                                <span className="mt-2 inline-flex items-center gap-1 text-sm text-[#7db0ff] group-hover:text-[#a9cbff]">
+                                  Open post
+                                  <ExternalLink size={12} />
+                                </span>
+                              </Link>
+                            ) : (
+                              <div className="rounded-lg border border-[#1a2d48] bg-[#081425] p-4">
+                                <p className="leading-relaxed">
+                                  <span className="font-semibold text-[#e4eeff]">{title}:</span> {desc}
+                                </p>
+                              </div>
+                            )}
                           </li>
                         );
                       })}
@@ -560,17 +600,26 @@ export default function SubredditClient({
 
                 {actionableTakeaway && (
                   <section className="rounded-lg border border-[#20406b] bg-[#081831] p-4">
-                    <h4 className="text-lg font-semibold text-[#8fbfff]">{keyAction?.title || 'Key Action'}</h4>
-                    <p className="mt-2 text-[1.02rem] leading-relaxed text-[#c8daf6]">{actionableTakeaway}</p>
-                    {keyActionSourceHref && (
+                    {keyActionSourceHref ? (
                       <Link
                         href={keyActionSourceHref}
                         target="_blank"
-                        className="mt-2 inline-flex items-center gap-1 text-sm text-[#7db0ff] hover:text-[#9ec3ff]"
+                        className="group block rounded-md p-1"
                       >
-                        View source
-                        <ExternalLink size={12} />
+                        <h4 className="text-lg font-semibold text-[#8fbfff] group-hover:text-[#b8d5ff]">
+                          {keyAction?.title || 'Key Action'}
+                        </h4>
+                        <p className="mt-2 text-[1.02rem] leading-relaxed text-[#c8daf6]">{actionableTakeaway}</p>
+                        <span className="mt-2 inline-flex items-center gap-1 text-sm text-[#7db0ff] group-hover:text-[#a9cbff]">
+                          Open post
+                          <ExternalLink size={12} />
+                        </span>
                       </Link>
+                    ) : (
+                      <>
+                        <h4 className="text-lg font-semibold text-[#8fbfff]">{keyAction?.title || 'Key Action'}</h4>
+                        <p className="mt-2 text-[1.02rem] leading-relaxed text-[#c8daf6]">{actionableTakeaway}</p>
+                      </>
                     )}
                   </section>
                 )}

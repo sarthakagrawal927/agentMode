@@ -182,6 +182,38 @@ function normalizeSourceId(value: unknown): string[] | null {
   return normalized;
 }
 
+function normalizeSummaryLink(value: unknown): string | null {
+  const raw = `${value ?? ""}`.trim();
+  if (!raw) return null;
+  if (!/^https?:\/\//i.test(raw)) return null;
+  return raw;
+}
+
+function toRedditSourceLink(
+  subreddit: string,
+  sourceId: unknown,
+): string | null {
+  const normalized = normalizeSourceId(sourceId);
+  if (!normalized || normalized.length === 0) return null;
+  const postId = `${normalized[0] ?? ""}`.trim();
+  const commentId = `${normalized[1] ?? ""}`.trim();
+  if (!postId) return null;
+  if (commentId) {
+    return `https://www.reddit.com/r/${subreddit}/comments/${postId}/comment/${commentId}`;
+  }
+  return `https://www.reddit.com/r/${subreddit}/comments/${postId}`;
+}
+
+function fallbackSourceIdFromTopPosts(topPosts: unknown): string[] | null {
+  if (!Array.isArray(topPosts)) return null;
+  for (const item of topPosts) {
+    const post = asRecord(item);
+    const id = `${post?.id ?? ""}`.trim();
+    if (id) return [id];
+  }
+  return null;
+}
+
 function normalizeSummaryPoint(value: unknown): JsonRecord | null {
   const rec = asRecord(value);
   if (!rec) return null;
@@ -189,10 +221,12 @@ function normalizeSummaryPoint(value: unknown): JsonRecord | null {
   const desc = `${rec.desc ?? ""}`.trim();
   if (!title && !desc) return null;
   const sourceId = normalizeSourceId(rec.sourceId);
+  const link = normalizeSummaryLink(rec.link);
   const out: JsonRecord = {};
   if (title) out.title = title;
   if (desc) out.desc = desc;
   if (sourceId) out.sourceId = sourceId;
+  if (link) out.link = link;
   return out;
 }
 
@@ -415,6 +449,56 @@ function isStructuredSummaryMalformed(value: unknown): boolean {
   const keyActionDesc = `${keyAction?.desc ?? ""}`.trim();
   if (looksLikeJsonBlob(keyTrendDesc) || looksLikeJsonBlob(keyActionDesc)) return true;
   return false;
+}
+
+function hydrateSummaryPointWithLink(
+  point: unknown,
+  subreddit: string,
+  fallbackSourceId: string[] | null,
+): JsonRecord | null {
+  const normalized = normalizeSummaryPoint(point);
+  if (!normalized) return null;
+  const sourceId = normalizeSourceId(normalized.sourceId) || fallbackSourceId;
+  const explicitLink = normalizeSummaryLink(normalized.link);
+  const link = explicitLink || toRedditSourceLink(subreddit, sourceId);
+  const out: JsonRecord = {
+    ...normalized,
+  };
+  if (sourceId) out.sourceId = sourceId;
+  if (link) out.link = link;
+  return out;
+}
+
+function hydrateSummaryLinks(
+  structured: unknown,
+  subreddit: string,
+  topPosts: unknown,
+): JsonRecord | null {
+  const normalized = normalizeSummaryStructured(structured);
+  if (!normalized) return null;
+  const fallbackSourceId = fallbackSourceIdFromTopPosts(topPosts);
+  const keyTrend = hydrateSummaryPointWithLink(
+    normalized.key_trend,
+    subreddit,
+    fallbackSourceId,
+  );
+  const notableRaw = Array.isArray(normalized.notable_discussions)
+    ? normalized.notable_discussions
+    : [];
+  const notable = notableRaw
+    .map((item) => hydrateSummaryPointWithLink(item, subreddit, fallbackSourceId))
+    .filter((item): item is JsonRecord => Boolean(item));
+  const keyAction = hydrateSummaryPointWithLink(
+    normalized.key_action,
+    subreddit,
+    fallbackSourceId,
+  );
+  if (!keyTrend && !keyAction && notable.length === 0) return null;
+  return {
+    key_trend: keyTrend || undefined,
+    notable_discussions: notable,
+    key_action: keyAction || undefined,
+  };
 }
 
 function truncateText(value: unknown, maxLen: number): string {
@@ -1043,18 +1127,27 @@ async function maybeAttachAiSummary(
 ): Promise<JsonRecord> {
   const normalizedExisting = normalizeSummaryStructured(baseCache.ai_summary_structured);
   if (normalizedExisting) {
+    const linkedExisting =
+      hydrateSummaryLinks(normalizedExisting, subredditName, baseCache.top_posts) ||
+      normalizedExisting;
     if (
       hasStructuredSummary(baseCache.ai_summary_structured) &&
       !isStructuredSummaryMalformed(normalizedExisting)
     ) {
-      return baseCache;
+      return {
+        ...baseCache,
+        ai_summary_structured: linkedExisting,
+      };
     }
     if (typeof baseCache.ai_summary === "string") {
       const repairedFromText = parseSummaryStructured(baseCache.ai_summary);
       if (repairedFromText && !isStructuredSummaryMalformed(repairedFromText)) {
+        const linkedRepaired =
+          hydrateSummaryLinks(repairedFromText, subredditName, baseCache.top_posts) ||
+          repairedFromText;
         return {
           ...baseCache,
-          ai_summary_structured: repairedFromText,
+          ai_summary_structured: linkedRepaired,
           ai_summary_generation_status: "success",
           ai_summary_generation_attempted_at:
             `${baseCache.ai_summary_generation_attempted_at ?? ""}`.trim() ||
@@ -1065,7 +1158,7 @@ async function maybeAttachAiSummary(
     }
     return {
       ...baseCache,
-      ai_summary_structured: normalizedExisting,
+      ai_summary_structured: linkedExisting,
     };
   }
 
@@ -1077,9 +1170,12 @@ async function maybeAttachAiSummary(
   if (typeof baseCache.ai_summary === "string") {
     const parsedFromText = parseSummaryStructured(baseCache.ai_summary);
     if (parsedFromText) {
+      const linkedFromText =
+        hydrateSummaryLinks(parsedFromText, subredditName, baseCache.top_posts) ||
+        parsedFromText;
       return {
         ...baseCache,
-        ai_summary_structured: parsedFromText,
+        ai_summary_structured: linkedFromText,
         ai_summary_generation_status: "success",
         ai_summary_generation_attempted_at:
           `${baseCache.ai_summary_generation_attempted_at ?? ""}`.trim() ||
@@ -1135,9 +1231,12 @@ async function maybeAttachAiSummary(
     const structured = parseSummaryStructured(text);
 
     if (structured) {
+      const linkedStructured =
+        hydrateSummaryLinks(structured, subredditName, baseCache.top_posts) ||
+        structured;
       return {
         ...baseCache,
-        ai_summary_structured: structured,
+        ai_summary_structured: linkedStructured,
         ai_prompt_used: systemPrompt,
         ai_summary_generation_status: "success",
         ai_summary_generation_attempted_at: attemptedAtIso,
@@ -1320,10 +1419,15 @@ async function handleSnapshot(
         (!normalizedStructured || isStructuredSummaryMalformed(normalizedStructured)))
         ? parseSummaryStructured(rec.ai_summary)
         : null;
-    if (normalizedStructured || parsedFromText) {
+    const linkedStructured = hydrateSummaryLinks(
+      parsedFromText || normalizedStructured,
+      normalizedSubreddit,
+      rec.top_posts,
+    );
+    if (linkedStructured) {
       return jsonResponse({
         ...rec,
-        ai_summary_structured: parsedFromText || normalizedStructured,
+        ai_summary_structured: linkedStructured,
       });
     }
     return jsonResponse(existing);
@@ -1375,19 +1479,25 @@ async function handleFeed(url: URL, env: Env): Promise<Response> {
     }
   }
 
-  const items = [...bestBySubreddit.values()].map((entry) => {
+  const items = [...bestBySubreddit.entries()].map(([subredditFromKey, entry]) => {
     const rec = asRecord(entry.data);
     if (!rec) return entry.data;
+    const subreddit = normalizeSubredditName(rec.subreddit || subredditFromKey || "");
     const normalizedStructured = normalizeSummaryStructured(rec.ai_summary_structured);
     const parsedFromText =
       (typeof rec.ai_summary === "string" &&
         (!normalizedStructured || isStructuredSummaryMalformed(normalizedStructured)))
         ? parseSummaryStructured(rec.ai_summary)
         : null;
-    if (!normalizedStructured && !parsedFromText) return rec;
+    const linkedStructured = hydrateSummaryLinks(
+      parsedFromText || normalizedStructured,
+      subreddit,
+      rec.top_posts,
+    );
+    if (!linkedStructured) return rec;
     return {
       ...rec,
-      ai_summary_structured: parsedFromText || normalizedStructured,
+      ai_summary_structured: linkedStructured,
     };
   });
   return jsonResponse({ duration, items });
@@ -1474,20 +1584,28 @@ async function handleSummary(request: Request, env: Env): Promise<Response> {
   if (cached) {
     const cachedPrompt = `${cached.ai_prompt_used ?? ""}`;
     const cachedStructured = normalizeSummaryStructured(cached.ai_summary_structured);
+    const linkedCachedStructured = hydrateSummaryLinks(
+      cachedStructured,
+      subredditName,
+      cached.top_posts,
+    );
     if (
       cachedPrompt === systemPrompt &&
-      cachedStructured &&
-      !isStructuredSummaryMalformed(cachedStructured)
+      linkedCachedStructured &&
+      !isStructuredSummaryMalformed(linkedCachedStructured)
     ) {
       return textResponse(
-        JSON.stringify(cachedStructured),
+        JSON.stringify(linkedCachedStructured),
         "application/json; charset=utf-8",
       );
     }
     if (cachedPrompt === systemPrompt && typeof cached.ai_summary === "string") {
       const parsedFromText = parseSummaryStructured(cached.ai_summary);
       if (parsedFromText) {
-        cached.ai_summary_structured = parsedFromText;
+        const linkedParsed =
+          hydrateSummaryLinks(parsedFromText, subredditName, cached.top_posts) ||
+          parsedFromText;
+        cached.ai_summary_structured = linkedParsed;
         delete cached.ai_summary;
         cached.ai_summary_generation_status = "success";
         cached.ai_summary_generation_attempted_at =
@@ -1503,7 +1621,7 @@ async function handleSummary(request: Request, env: Env): Promise<Response> {
         );
         await saveSnapshot(env, subredditName, duration, cached).catch(() => undefined);
         return textResponse(
-          JSON.stringify(parsedFromText),
+          JSON.stringify(linkedParsed),
           "application/json; charset=utf-8",
         );
       }
@@ -1530,7 +1648,8 @@ async function handleSummary(request: Request, env: Env): Promise<Response> {
       }) as JsonRecord;
 
   if (structured) {
-    baseCache.ai_summary_structured = structured;
+    baseCache.ai_summary_structured =
+      hydrateSummaryLinks(structured, subredditName, baseCache.top_posts) || structured;
     delete baseCache.ai_summary;
     baseCache.ai_summary_generation_status = "success";
     baseCache.ai_summary_generation_attempted_at = new Date().toISOString();
@@ -1554,7 +1673,12 @@ async function handleSummary(request: Request, env: Env): Promise<Response> {
   await saveSnapshot(env, subredditName, duration, baseCache).catch(() => undefined);
 
   if (structured) {
-    return textResponse(JSON.stringify(structured), "application/json; charset=utf-8");
+    const linkedStructured =
+      hydrateSummaryLinks(structured, subredditName, baseCache.top_posts) || structured;
+    return textResponse(
+      JSON.stringify(linkedStructured),
+      "application/json; charset=utf-8",
+    );
   }
   return textResponse(text, "text/plain; charset=utf-8");
 }
