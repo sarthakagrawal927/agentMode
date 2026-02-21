@@ -53,21 +53,28 @@ DEFAULT_PROMPT = (
 )
 
 
-def _load_allowed_subreddits() -> set[str]:
+def _load_prompt_defaults() -> dict[str, str]:
     try:
         prompts_file = Path(__file__).parent / "prompts.json"
         if not prompts_file.exists():
-            return set()
+            return {}
         with prompts_file.open("r", encoding="utf-8") as f:
             data = json.load(f)
         if not isinstance(data, dict):
-            return set()
-        return {str(k).strip().lower() for k in data.keys() if str(k).strip()}
+            return {}
+        out: dict[str, str] = {}
+        for k, v in data.items():
+            key = str(k).strip()
+            value = str(v).strip()
+            if key and value:
+                out[key] = value
+        return out
     except Exception:
-        return set()
+        return {}
 
 
-ALLOWED_SUBREDDITS = _load_allowed_subreddits()
+PROMPT_DEFAULTS = _load_prompt_defaults()
+ALLOWED_SUBREDDITS = {k.lower() for k in PROMPT_DEFAULTS.keys()}
 
 
 async def _read_prompt_map() -> dict:
@@ -75,16 +82,23 @@ async def _read_prompt_map() -> dict:
         pool = get_pool()
         async with pool.acquire() as conn:
             rows = await conn.fetch("SELECT subreddit, prompt FROM prompts")
-        prompt_map = {row["subreddit"]: row["prompt"] for row in rows}
-        if not ALLOWED_SUBREDDITS:
-            return prompt_map
-        return {
+        db_prompt_map = {row["subreddit"]: row["prompt"] for row in rows}
+        if ALLOWED_SUBREDDITS:
+            db_prompt_map = {
+                subreddit: prompt
+                for subreddit, prompt in db_prompt_map.items()
+                if subreddit.strip().lower() in ALLOWED_SUBREDDITS
+            }
+        if not PROMPT_DEFAULTS:
+            return db_prompt_map
+        merged = dict(PROMPT_DEFAULTS)
+        merged.update({
             subreddit: prompt
-            for subreddit, prompt in prompt_map.items()
-            if subreddit.strip().lower() in ALLOWED_SUBREDDITS
-        }
+            for subreddit, prompt in db_prompt_map.items()
+        })
+        return merged
     except Exception:
-        return {}
+        return dict(PROMPT_DEFAULTS)
 
 
 async def _write_prompt_map(subreddit: str, prompt: str) -> None:
@@ -448,6 +462,8 @@ async def get_subreddit_prompt(subreddit: str):
         value = prompts.get(s)
         if isinstance(value, str) and value.strip():
             return {"subreddit": s, "prompt": value, "isDefault": False}
+        if s in PROMPT_DEFAULTS:
+            return {"subreddit": s, "prompt": PROMPT_DEFAULTS[s], "isDefault": True}
         # Fall back to default prompt with token replacement
         prompt = DEFAULT_PROMPT.replace("{subreddit}", s)
         return {"subreddit": s, "prompt": prompt, "isDefault": True}
