@@ -196,6 +196,53 @@ function normalizeSummaryPoint(value: unknown): JsonRecord | null {
   return out;
 }
 
+function deriveKeyActionFromPoint(point: JsonRecord | null): JsonRecord | null {
+  if (!point) return null;
+  const desc = `${point.desc ?? point.title ?? ""}`.trim();
+  if (!desc) return null;
+  return normalizeSummaryPoint({
+    title: "Key Action",
+    desc,
+    sourceId: point.sourceId,
+  });
+}
+
+function sanitizeSummaryJsonCandidate(input: string): string {
+  return input.replace(
+    /"sourceId"\s*:\s*\[([^\]]*)\]/g,
+    (_match, inner: string) => {
+      const parts = `${inner}`
+        .split(",")
+        .map((part) => `${part}`.trim())
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((part) => {
+          const quotedDouble = part.startsWith('"') && part.endsWith('"');
+          const quotedSingle = part.startsWith("'") && part.endsWith("'");
+          if (quotedDouble || quotedSingle) {
+            return JSON.stringify(part.slice(1, -1).trim());
+          }
+          return JSON.stringify(part);
+        });
+      return `"sourceId":[${parts.join(",")}]`;
+    },
+  );
+}
+
+function parseSummaryJsonCandidate(candidate: string): JsonRecord | null {
+  const attempts = [candidate, sanitizeSummaryJsonCandidate(candidate)];
+  for (const raw of attempts) {
+    try {
+      const parsed = JSON.parse(raw);
+      const normalized = normalizeSummaryStructured(parsed);
+      if (normalized) return normalized;
+    } catch {
+      // Try next attempt.
+    }
+  }
+  return null;
+}
+
 function normalizeSummaryStructured(value: unknown): JsonRecord | null {
   if (Array.isArray(value)) {
     const points = value
@@ -207,10 +254,14 @@ function normalizeSummaryStructured(value: unknown): JsonRecord | null {
     const last = points.length > 1 ? points[points.length - 1] : null;
     const middle =
       points.length > 2 ? points.slice(1, points.length - 1) : [];
+    const derivedAction =
+      deriveKeyActionFromPoint(last && last !== first ? last : null) ||
+      deriveKeyActionFromPoint(points[points.length - 1] || null) ||
+      deriveKeyActionFromPoint(first || null);
     return {
       key_trend: first,
       notable_discussions: middle,
-      key_action: last && last !== first ? last : undefined,
+      key_action: derivedAction || undefined,
     };
   }
 
@@ -228,12 +279,17 @@ function normalizeSummaryStructured(value: unknown): JsonRecord | null {
   const notable = notableRaw
     .map((item) => normalizeSummaryPoint(item))
     .filter((item): item is JsonRecord => Boolean(item));
+  const fallbackFromNotable =
+    notable.length > 0
+      ? deriveKeyActionFromPoint(notable[notable.length - 1] || null)
+      : null;
+  const finalKeyAction = keyAction || fallbackFromNotable || deriveKeyActionFromPoint(keyTrend);
 
-  if (!keyTrend && !keyAction && notable.length === 0) return null;
+  if (!keyTrend && !finalKeyAction && notable.length === 0) return null;
   return {
     key_trend: keyTrend || undefined,
     notable_discussions: notable,
-    key_action: keyAction || undefined,
+    key_action: finalKeyAction || undefined,
   };
 }
 
@@ -245,11 +301,88 @@ function parseSummaryStructured(text: string): JsonRecord | null {
     .replace(/^```\s*/i, "")
     .replace(/\s*```$/i, "")
     .trim();
-  try {
-    const parsed = JSON.parse(withoutFences);
-    return normalizeSummaryStructured(parsed);
-  } catch {
-    return null;
+  const parsedDirect = parseSummaryJsonCandidate(withoutFences);
+  if (parsedDirect) return parsedDirect;
+
+  {
+    const firstBrace = withoutFences.indexOf("{");
+    const lastBrace = withoutFences.lastIndexOf("}");
+    if (firstBrace >= 0 && lastBrace > firstBrace) {
+      const candidate = withoutFences.slice(firstBrace, lastBrace + 1).trim();
+      const parsedCandidate = parseSummaryJsonCandidate(candidate);
+      if (parsedCandidate) return parsedCandidate;
+    }
+
+    const actionPatterns = [
+      /^key action\s*[:\-]\s*/i,
+      /^actionable takeaway\s*[:\-]\s*/i,
+      /^next step\s*[:\-]\s*/i,
+      /^action item\s*[:\-]\s*/i,
+    ];
+    const cleanedLines = withoutFences
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const actionLine = cleanedLines.find((line) =>
+      actionPatterns.some((pattern) => pattern.test(line)),
+    );
+    const cleanedAction = actionLine
+      ? actionPatterns.reduce(
+          (acc, pattern) => acc.replace(pattern, "").trim(),
+          actionLine,
+        )
+      : "";
+
+    const bulletLines = withoutFences
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => /^[-*•]\s+/.test(line))
+      .map((line) => line.replace(/^[-*•]\s+/, "").trim())
+      .filter(Boolean)
+      .filter((line) => !actionPatterns.some((pattern) => pattern.test(line)));
+    const paragraphs = withoutFences
+      .split(/\n{2,}/)
+      .map((part) => part.trim())
+      .filter(Boolean);
+    if (bulletLines.length === 0 && paragraphs.length === 0) return null;
+
+    const notable = (bulletLines.length > 0 ? bulletLines : paragraphs.slice(1))
+      .slice(0, 6)
+      .map((line, idx) => {
+        const colon = line.indexOf(":");
+        if (colon > 0 && colon < 80) {
+          return normalizeSummaryPoint({
+            title: line.slice(0, colon).trim(),
+            desc: line.slice(colon + 1).trim(),
+          });
+        }
+        return normalizeSummaryPoint({
+          title: `Discussion ${idx + 1}`,
+          desc: line,
+        });
+      })
+      .filter((item): item is JsonRecord => Boolean(item));
+
+    const keyTrendDesc = paragraphs[0] || bulletLines[0] || "";
+    const keyActionDesc =
+      cleanedAction ||
+      (paragraphs.length > 1
+        ? paragraphs[paragraphs.length - 1]
+        : bulletLines.length > 1
+          ? bulletLines[bulletLines.length - 1]
+          : "");
+
+    const derived = {
+      key_trend: normalizeSummaryPoint({
+        title: "Key Trend",
+        desc: keyTrendDesc,
+      }),
+      notable_discussions: notable,
+      key_action: keyActionDesc
+        ? normalizeSummaryPoint({ title: "Key Action", desc: keyActionDesc })
+        : undefined,
+    };
+    return normalizeSummaryStructured(derived);
   }
 }
 
@@ -260,6 +393,27 @@ function hasStructuredSummary(value: unknown): boolean {
   if (Array.isArray(rec.notable_discussions) && rec.notable_discussions.length > 0)
     return true;
   if (rec.key_action) return true;
+  return false;
+}
+
+function looksLikeJsonBlob(text: string): boolean {
+  const normalized = `${text}`.trim();
+  if (!normalized) return false;
+  if (normalized.startsWith("{") || normalized.startsWith("[")) return true;
+  if (normalized.includes('"key_trend"')) return true;
+  if (normalized.includes('"notable_discussions"')) return true;
+  if (normalized.includes('"key_action"')) return true;
+  return false;
+}
+
+function isStructuredSummaryMalformed(value: unknown): boolean {
+  const rec = asRecord(value);
+  if (!rec) return false;
+  const keyTrend = asRecord(rec.key_trend);
+  const keyAction = asRecord(rec.key_action);
+  const keyTrendDesc = `${keyTrend?.desc ?? ""}`.trim();
+  const keyActionDesc = `${keyAction?.desc ?? ""}`.trim();
+  if (looksLikeJsonBlob(keyTrendDesc) || looksLikeJsonBlob(keyActionDesc)) return true;
   return false;
 }
 
@@ -889,12 +1043,36 @@ async function maybeAttachAiSummary(
 ): Promise<JsonRecord> {
   const normalizedExisting = normalizeSummaryStructured(baseCache.ai_summary_structured);
   if (normalizedExisting) {
-    if (hasStructuredSummary(baseCache.ai_summary_structured)) return baseCache;
+    if (
+      hasStructuredSummary(baseCache.ai_summary_structured) &&
+      !isStructuredSummaryMalformed(normalizedExisting)
+    ) {
+      return baseCache;
+    }
+    if (typeof baseCache.ai_summary === "string") {
+      const repairedFromText = parseSummaryStructured(baseCache.ai_summary);
+      if (repairedFromText && !isStructuredSummaryMalformed(repairedFromText)) {
+        return {
+          ...baseCache,
+          ai_summary_structured: repairedFromText,
+          ai_summary_generation_status: "success",
+          ai_summary_generation_attempted_at:
+            `${baseCache.ai_summary_generation_attempted_at ?? ""}`.trim() ||
+            new Date().toISOString(),
+          ai_summary_generation_error: null,
+        };
+      }
+    }
     return {
       ...baseCache,
       ai_summary_structured: normalizedExisting,
     };
   }
+
+  const status = `${baseCache.ai_summary_generation_status ?? ""}`.trim();
+  const attemptedAt = Date.parse(
+    `${baseCache.ai_summary_generation_attempted_at ?? ""}`.trim(),
+  );
 
   if (typeof baseCache.ai_summary === "string") {
     const parsedFromText = parseSummaryStructured(baseCache.ai_summary);
@@ -909,25 +1087,16 @@ async function maybeAttachAiSummary(
         ai_summary_generation_error: null,
       };
     }
-    const rawStatus = `${baseCache.ai_summary_generation_status ?? ""}`.trim();
-    const rawAttemptedAt = Date.parse(
-      `${baseCache.ai_summary_generation_attempted_at ?? ""}`.trim(),
-    );
-    if (
-      rawStatus === "success_raw" &&
-      Number.isFinite(rawAttemptedAt) &&
-      Date.now() - rawAttemptedAt < SUMMARY_RETRY_COOLDOWN_MS
-    ) {
-      return baseCache;
-    }
+    // If we already generated raw text once and still cannot structure it,
+    // avoid auto-calling OpenAI repeatedly on every page load.
+    if (status === "success_raw") return baseCache;
   }
 
-  const status = `${baseCache.ai_summary_generation_status ?? ""}`.trim();
-  const attemptedAt = Date.parse(
-    `${baseCache.ai_summary_generation_attempted_at ?? ""}`.trim(),
-  );
+  if (status === "failed") {
+    return baseCache;
+  }
   if (
-    status === "failed" &&
+    status === "skipped_no_posts" &&
     Number.isFinite(attemptedAt) &&
     Date.now() - attemptedAt < SUMMARY_RETRY_COOLDOWN_MS
   ) {
@@ -1147,13 +1316,14 @@ async function handleSnapshot(
     if (!rec) return jsonResponse(existing);
     const normalizedStructured = normalizeSummaryStructured(rec.ai_summary_structured);
     const parsedFromText =
-      !normalizedStructured && typeof rec.ai_summary === "string"
+      (typeof rec.ai_summary === "string" &&
+        (!normalizedStructured || isStructuredSummaryMalformed(normalizedStructured)))
         ? parseSummaryStructured(rec.ai_summary)
         : null;
     if (normalizedStructured || parsedFromText) {
       return jsonResponse({
         ...rec,
-        ai_summary_structured: normalizedStructured || parsedFromText,
+        ai_summary_structured: parsedFromText || normalizedStructured,
       });
     }
     return jsonResponse(existing);
@@ -1210,13 +1380,14 @@ async function handleFeed(url: URL, env: Env): Promise<Response> {
     if (!rec) return entry.data;
     const normalizedStructured = normalizeSummaryStructured(rec.ai_summary_structured);
     const parsedFromText =
-      !normalizedStructured && typeof rec.ai_summary === "string"
+      (typeof rec.ai_summary === "string" &&
+        (!normalizedStructured || isStructuredSummaryMalformed(normalizedStructured)))
         ? parseSummaryStructured(rec.ai_summary)
         : null;
     if (!normalizedStructured && !parsedFromText) return rec;
     return {
       ...rec,
-      ai_summary_structured: normalizedStructured || parsedFromText,
+      ai_summary_structured: parsedFromText || normalizedStructured,
     };
   });
   return jsonResponse({ duration, items });
@@ -1303,13 +1474,39 @@ async function handleSummary(request: Request, env: Env): Promise<Response> {
   if (cached) {
     const cachedPrompt = `${cached.ai_prompt_used ?? ""}`;
     const cachedStructured = normalizeSummaryStructured(cached.ai_summary_structured);
-    if (cachedPrompt === systemPrompt && cachedStructured) {
+    if (
+      cachedPrompt === systemPrompt &&
+      cachedStructured &&
+      !isStructuredSummaryMalformed(cachedStructured)
+    ) {
       return textResponse(
         JSON.stringify(cachedStructured),
         "application/json; charset=utf-8",
       );
     }
     if (cachedPrompt === systemPrompt && typeof cached.ai_summary === "string") {
+      const parsedFromText = parseSummaryStructured(cached.ai_summary);
+      if (parsedFromText) {
+        cached.ai_summary_structured = parsedFromText;
+        delete cached.ai_summary;
+        cached.ai_summary_generation_status = "success";
+        cached.ai_summary_generation_attempted_at =
+          `${cached.ai_summary_generation_attempted_at ?? ""}`.trim() ||
+          new Date().toISOString();
+        cached.ai_summary_generation_error = null;
+        await setCache(
+          env,
+          SUBREDDIT_CACHE_NAMESPACE,
+          cacheKey,
+          cached,
+          ONE_DAY_TTL_SECONDS,
+        );
+        await saveSnapshot(env, subredditName, duration, cached).catch(() => undefined);
+        return textResponse(
+          JSON.stringify(parsedFromText),
+          "application/json; charset=utf-8",
+        );
+      }
       return textResponse(`${cached.ai_summary}`, "text/plain; charset=utf-8");
     }
   }

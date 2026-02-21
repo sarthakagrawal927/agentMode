@@ -61,6 +61,13 @@ function normalizeSummaryItem(value: unknown): SummaryItem | null {
   return { title, desc };
 }
 
+function deriveKeyActionFromItem(item: SummaryItem | null): SummaryItem | null {
+  if (!item) return null;
+  const desc = `${item.desc || item.title || ''}`.trim();
+  if (!desc) return null;
+  return { title: 'Key Action', desc };
+}
+
 function normalizeStructured(value: unknown): SummaryStructured | null {
   if (!value) return null;
   if (Array.isArray(value)) {
@@ -68,10 +75,16 @@ function normalizeStructured(value: unknown): SummaryStructured | null {
       .map((item) => normalizeSummaryItem(item))
       .filter((item): item is SummaryItem => !!item);
     if (items.length === 0) return null;
+    const first = items[0];
+    const last = items.length > 1 ? items[items.length - 1] : undefined;
+    const derivedAction =
+      deriveKeyActionFromItem(last && last !== first ? last : null) ||
+      deriveKeyActionFromItem(items[items.length - 1] || null) ||
+      deriveKeyActionFromItem(first || null);
     return {
-      key_trend: items[0],
+      key_trend: first,
       notable_discussions: items.slice(1, Math.max(1, items.length - 1)),
-      key_action: items.length > 1 ? items[items.length - 1] : undefined,
+      key_action: derivedAction || undefined,
     };
   }
   if (typeof value !== 'object') return null;
@@ -82,16 +95,94 @@ function normalizeStructured(value: unknown): SummaryStructured | null {
     .filter((item): item is SummaryItem => !!item);
   const keyTrend = normalizeSummaryItem(raw.key_trend);
   const keyAction = normalizeSummaryItem(raw.key_action);
-  if (!keyTrend && !keyAction && notable.length === 0) return null;
+  const finalKeyAction =
+    keyAction ||
+    (notable.length > 0 ? deriveKeyActionFromItem(notable[notable.length - 1] || null) : null) ||
+    deriveKeyActionFromItem(keyTrend);
+  if (!keyTrend && !finalKeyAction && notable.length === 0) return null;
   return {
     key_trend: keyTrend || undefined,
     notable_discussions: notable,
-    key_action: keyAction || undefined,
+    key_action: finalKeyAction || undefined,
   };
 }
 
+function sanitizeSummaryJsonCandidate(input: string): string {
+  return input.replace(/"sourceId"\s*:\s*\[([^\]]*)\]/g, (_match, inner: string) => {
+    const parts = `${inner}`
+      .split(',')
+      .map((part) => `${part}`.trim())
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => {
+        const quotedDouble = part.startsWith('"') && part.endsWith('"');
+        const quotedSingle = part.startsWith("'") && part.endsWith("'");
+        if (quotedDouble || quotedSingle) return JSON.stringify(part.slice(1, -1).trim());
+        return JSON.stringify(part);
+      });
+    return `"sourceId":[${parts.join(',')}]`;
+  });
+}
+
+function parseSummaryJsonCandidate(candidate: string): SummaryStructured | null {
+  const attempts = [candidate, sanitizeSummaryJsonCandidate(candidate)];
+  for (const raw of attempts) {
+    try {
+      const structured = normalizeStructured(JSON.parse(raw));
+      if (structured) return structured;
+    } catch {
+      // Try next attempt.
+    }
+  }
+  return null;
+}
+
+function looksLikeJsonBlob(text: string): boolean {
+  const normalized = `${text}`.trim();
+  if (!normalized) return false;
+  if (normalized.startsWith('{') || normalized.startsWith('[')) return true;
+  if (normalized.includes('"key_trend"')) return true;
+  if (normalized.includes('"notable_discussions"')) return true;
+  if (normalized.includes('"key_action"')) return true;
+  return false;
+}
+
+function isStructuredSummaryMalformed(value: SummaryStructured | null): boolean {
+  if (!value) return false;
+  if (looksLikeJsonBlob(`${value.key_trend?.desc || ''}`)) return true;
+  if (looksLikeJsonBlob(`${value.key_action?.desc || ''}`)) return true;
+  return false;
+}
+
+function parseSummaryTextAsStructured(text: string): SummaryStructured | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  const withoutFences = trimmed
+    .replace(/^```json\s*/i, '')
+    .replace(/^```\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+
+  const parsedDirect = parseSummaryJsonCandidate(withoutFences);
+  if (parsedDirect) return parsedDirect;
+  const firstBrace = withoutFences.indexOf('{');
+  const lastBrace = withoutFences.lastIndexOf('}');
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    return parseSummaryJsonCandidate(withoutFences.slice(firstBrace, lastBrace + 1));
+  }
+  return null;
+}
+
 function previewItems(item: FeedItem): SummaryItem[] {
-  const structured = normalizeStructured(item.ai_summary_structured);
+  const normalized = normalizeStructured(item.ai_summary_structured);
+  const structured =
+    (normalized && !isStructuredSummaryMalformed(normalized)
+      ? normalized
+      : null) ||
+    (typeof item.ai_summary === 'string'
+      ? parseSummaryTextAsStructured(item.ai_summary)
+      : null) ||
+    normalized;
   if (!structured) return [];
   const list: SummaryItem[] = [];
   if (structured.key_trend) list.push(structured.key_trend);

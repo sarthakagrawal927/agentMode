@@ -102,6 +102,17 @@ function normalizeSummaryItem(value: unknown): SummaryItem | null {
   return { title, desc, sourceId };
 }
 
+function deriveKeyActionFromItem(item: SummaryItem | null): SummaryItem | null {
+  if (!item) return null;
+  const desc = `${item.desc || item.title || ''}`.trim();
+  if (!desc) return null;
+  return {
+    title: 'Key Action',
+    desc,
+    sourceId: Array.isArray(item.sourceId) ? item.sourceId : undefined,
+  };
+}
+
 function normalizeSummaryStructured(value: unknown): SummaryStructured | null {
   if (!value) return null;
   if (Array.isArray(value)) {
@@ -112,10 +123,14 @@ function normalizeSummaryStructured(value: unknown): SummaryStructured | null {
     const first = items[0];
     const last = items.length > 1 ? items[items.length - 1] : undefined;
     const middle = items.length > 2 ? items.slice(1, items.length - 1) : [];
+    const derivedAction =
+      deriveKeyActionFromItem(last && last !== first ? last : null) ||
+      deriveKeyActionFromItem(items[items.length - 1] || null) ||
+      deriveKeyActionFromItem(first || null);
     return {
       key_trend: first,
       notable_discussions: middle,
-      key_action: last && last !== first ? last : undefined,
+      key_action: derivedAction || undefined,
     };
   }
 
@@ -133,13 +148,64 @@ function normalizeSummaryStructured(value: unknown): SummaryStructured | null {
   const notable = notableRaw
     .map((item) => normalizeSummaryItem(item))
     .filter((item): item is SummaryItem => !!item);
+  const finalKeyAction =
+    keyAction ||
+    (notable.length > 0 ? deriveKeyActionFromItem(notable[notable.length - 1] || null) : null) ||
+    deriveKeyActionFromItem(keyTrend);
 
-  if (!keyTrend && !keyAction && notable.length === 0) return null;
+  if (!keyTrend && !finalKeyAction && notable.length === 0) return null;
   return {
     key_trend: keyTrend || undefined,
     notable_discussions: notable,
-    key_action: keyAction || undefined,
+    key_action: finalKeyAction || undefined,
   };
+}
+
+function sanitizeSummaryJsonCandidate(input: string): string {
+  return input.replace(/"sourceId"\s*:\s*\[([^\]]*)\]/g, (_match, inner: string) => {
+    const parts = `${inner}`
+      .split(',')
+      .map((part) => `${part}`.trim())
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => {
+        const quotedDouble = part.startsWith('"') && part.endsWith('"');
+        const quotedSingle = part.startsWith("'") && part.endsWith("'");
+        if (quotedDouble || quotedSingle) return JSON.stringify(part.slice(1, -1).trim());
+        return JSON.stringify(part);
+      });
+    return `"sourceId":[${parts.join(',')}]`;
+  });
+}
+
+function parseSummaryJsonCandidate(candidate: string): SummaryStructured | null {
+  const attempts = [candidate, sanitizeSummaryJsonCandidate(candidate)];
+  for (const raw of attempts) {
+    try {
+      const structured = normalizeSummaryStructured(JSON.parse(raw));
+      if (structured) return structured;
+    } catch {
+      // Try next attempt.
+    }
+  }
+  return null;
+}
+
+function looksLikeJsonBlob(text: string): boolean {
+  const normalized = `${text}`.trim();
+  if (!normalized) return false;
+  if (normalized.startsWith('{') || normalized.startsWith('[')) return true;
+  if (normalized.includes('"key_trend"')) return true;
+  if (normalized.includes('"notable_discussions"')) return true;
+  if (normalized.includes('"key_action"')) return true;
+  return false;
+}
+
+function isStructuredSummaryMalformed(value: SummaryStructured | null): boolean {
+  if (!value) return false;
+  if (looksLikeJsonBlob(`${value.key_trend?.desc || ''}`)) return true;
+  if (looksLikeJsonBlob(`${value.key_action?.desc || ''}`)) return true;
+  return false;
 }
 
 function parseSummaryTextAsStructured(text: string): SummaryStructured | null {
@@ -150,11 +216,72 @@ function parseSummaryTextAsStructured(text: string): SummaryStructured | null {
     .replace(/^```\s*/i, '')
     .replace(/\s*```$/i, '')
     .trim();
-  try {
-    return normalizeSummaryStructured(JSON.parse(withoutFences));
-  } catch {
-    return null;
+  const parsedDirect = parseSummaryJsonCandidate(withoutFences);
+  if (parsedDirect) return parsedDirect;
+
+  {
+    const firstBrace = withoutFences.indexOf('{');
+    const lastBrace = withoutFences.lastIndexOf('}');
+    if (firstBrace >= 0 && lastBrace > firstBrace) {
+      const parsedCandidate = parseSummaryJsonCandidate(
+        withoutFences.slice(firstBrace, lastBrace + 1),
+      );
+      if (parsedCandidate) return parsedCandidate;
+    }
+
+    const lines = withoutFences
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const bullets = lines
+      .filter((line) => /^[-*•]\s+/.test(line))
+      .map((line) => line.replace(/^[-*•]\s+/, '').trim())
+      .filter(Boolean);
+    const paragraphs = withoutFences
+      .split(/\n{2,}/)
+      .map((part) => part.trim())
+      .filter(Boolean);
+
+    if (bullets.length === 0 && paragraphs.length === 0) return null;
+
+    const actionPrefix = /^(key action|actionable takeaway|next step|action item)\s*[:\-]\s*/i;
+    const actionLine = lines.find((line) => actionPrefix.test(line));
+    const actionText = actionLine ? actionLine.replace(actionPrefix, '').trim() : '';
+    const notableRaw = (bullets.length > 0 ? bullets : paragraphs.slice(1)).slice(0, 6);
+    const notable = notableRaw
+      .map((entry, idx) => {
+        const colon = entry.indexOf(':');
+        if (colon > 0 && colon < 80) {
+          return normalizeSummaryItem({
+            title: entry.slice(0, colon).trim(),
+            desc: entry.slice(colon + 1).trim(),
+          });
+        }
+        return normalizeSummaryItem({ title: `Discussion ${idx + 1}`, desc: entry });
+      })
+      .filter((item): item is SummaryItem => !!item);
+
+    return normalizeSummaryStructured({
+      key_trend: normalizeSummaryItem({
+        title: 'Key Trend',
+        desc: paragraphs[0] || bullets[0] || '',
+      }),
+      notable_discussions: notable,
+      key_action: actionText
+        ? normalizeSummaryItem({ title: 'Key Action', desc: actionText })
+        : undefined,
+    });
   }
+}
+
+function resolveStructuredSummary(data: any): SummaryStructured | null {
+  const normalized = normalizeSummaryStructured(data?.ai_summary_structured);
+  if (normalized && !isStructuredSummaryMalformed(normalized)) return normalized;
+  if (typeof data?.ai_summary === 'string') {
+    const parsed = parseSummaryTextAsStructured(data.ai_summary);
+    if (parsed) return parsed;
+  }
+  return normalized;
 }
 
 export default function SubredditClient({
@@ -180,12 +307,7 @@ export default function SubredditClient({
   });
   const [aiSummaryStructured, setAiSummaryStructured] = useState<SummaryStructured | null>(() => {
     if (!initialResearch) return null;
-    return (
-      normalizeSummaryStructured(initialResearch.ai_summary_structured) ||
-      (typeof initialResearch.ai_summary === 'string'
-        ? parseSummaryTextAsStructured(initialResearch.ai_summary)
-        : null)
-    );
+    return resolveStructuredSummary(initialResearch);
   });
   const [aiGenerating, setAiGenerating] = useState<boolean>(false);
   const [aiError, setAiError] = useState<string | null>(null);
@@ -224,11 +346,7 @@ export default function SubredditClient({
         }
         if (data) {
           setResearchInfo(data);
-          const structured =
-            normalizeSummaryStructured(data.ai_summary_structured) ||
-            (typeof data.ai_summary === 'string'
-              ? parseSummaryTextAsStructured(data.ai_summary)
-              : null);
+          const structured = resolveStructuredSummary(data);
           setAiSummaryStructured(structured);
           if (structured) {
             setAiSummary('');
