@@ -1,153 +1,86 @@
-## AgentData
+# AgentData
 
-![AI Generated](https://ai-percentage-pin.vercel.app/api/ai-percentage?value=50)
-![AI PRs Welcome](https://ai-percentage-pin.vercel.app/api/ai-prs?welcome=yes)
+AgentData is a full-stack subreddit research tool. It collects top Reddit posts, caches/snapshots results, and generates AI summaries with source references.
 
-A small, two-service project for researching subreddits and aggregating persona-style insights. The new structure separates a FastAPI backend from a Next.js frontend for clean deploys.
+## What It Does
 
-### Architecture
-- **backend**: FastAPI service exposing `/api` endpoints
-- **web**: Next.js 14 app (App Router) consuming the backend
+- Pulls top posts for a subreddit over `1d`, `1week`, or `1month`
+- Caches results in Postgres for faster repeat queries
+- Stores daily snapshots you can revisit by date
+- Streams AI summaries from the backend
+- Supports custom subreddit prompts with admin-only updates
+- Includes a Discover feed for previously cached summaries
 
-Legacy notes, experiments, and older details have been moved to `oldreadme.md`.
+## Architecture
 
-### Prerequisites
-- Node.js 20+
-- Python 3.11+
+- `backend/`: FastAPI service + Postgres cache/snapshot/prompt storage
+- `web/`: Next.js 14 UI (App Router)
+- `docs/`: deployment notes (including Hetzner + Dokploy)
 
-### Environment variables
-- **Backend** (place in `backend/.env`):
-  - `OPENAI_API_KEY`
-  - `REDDIT_CLIENT_ID`
-  - `REDDIT_CLIENT_SECRET`
-- **Frontend** (place in `web/.env`):
-  - `NEXT_PUBLIC_API_BASE_URL` (e.g. `http://localhost:8000/api`)
+## Tech Stack
 
-### Local development (uv + Next.js)
+- Backend: FastAPI, asyncpg, asyncpraw, OpenAI API
+- Frontend: Next.js, React, TypeScript, Tailwind
+- Data store: Postgres/CockroachDB (`cache_entries`, `prompts`, `snapshots`)
+
+## Environment Variables
+
+Backend (`backend/.env`):
+
+- `DATABASE_URL` (required)
+- `OPENAI_API_KEY` (required for summaries)
+- `REDDIT_CLIENT_ID` (required)
+- `REDDIT_CLIENT_SECRET` (required)
+- `ADMIN_EMAIL` (required for prompt management + summary generation)
+
+Frontend (`web/.env.local`):
+
+- `NEXT_PUBLIC_API_BASE_URL` (required, example: `http://localhost:8000/api`)
+- `NEXT_PUBLIC_ADMIN_EMAIL` (optional but recommended)
+- `NEXT_PUBLIC_GOOGLE_CLIENT_ID` (optional, needed for Google sign-in)
+
+## Local Development
+
+### 1) Run backend
+
 ```bash
-# Backend
 cd backend
+cp env.example .env
+
+# install uv if needed
 curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
+
 uv sync
 uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
+```
 
-# Frontend
+### 2) Run web app
+
+```bash
 cd web
+cp env.example .env.local
 npm install
 npm run dev
 ```
 
-Open the app at http://localhost:3000. The API runs on http://localhost:8000.
+Open `http://localhost:3000`.
 
-Ensure you have `backend/.env` and `web/.env` populated as noted above.
+## Important API Endpoints
 
-### API
-- `GET /` — health check
-- `POST /api/research/subreddit` — body: `{ subreddit_name: string, duration?: '1d' | '1week' | '1month', limit?: number }`
-- `POST /api/research` — legacy persona aggregator (kept for reference)
+- `GET /` - health message
+- `GET /health` - health + DB connectivity
+- `POST /api/research/subreddit` - fetch/cached subreddit posts
+- `GET /api/research/subreddit/{subreddit}/dates` - list snapshot dates
+- `GET /api/research/subreddit/{subreddit}/snapshot/{date}` - fetch snapshot by date
+- `GET /api/research/subreddit/feed` - discover feed
+- `POST /api/research/subreddit/summary/stream` - stream AI summary (admin auth required)
+- `GET /api/prompts` - list prompts
+- `GET /api/prompts/{subreddit}` - get prompt for subreddit
+- `POST /api/prompts/{subreddit}` - save prompt (admin auth required)
 
-### Deploy
-- **Backend (Render)**
-  - Path: `backend/`
-  - Build Command: `curl -LsSf https://astral.sh/uv/install.sh | sh && export PATH=\"$HOME/.local/bin:$PATH\" && uv sync --no-dev`
-  - Start Command: `export PATH=\"$HOME/.local/bin:$PATH\" && uv run uvicorn main:app --host 0.0.0.0 --port $PORT`
-  - Env Vars: `OPENAI_API_KEY`, `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`
-  - Optional IaC: `backend/render.yaml` is included (monorepo).
-- **Frontend (Vercel)**
-  - Framework: Next.js 14 (auto-detected)
-  - Env Var: `NEXT_PUBLIC_API_BASE_URL` → set to your Render backend public URL (e.g. `https://your-render-service.onrender.com/api`)
-  - Build Command: default (`next build`)
-  - Output: default (`.next`)
+## Deployment
 
-### Notes
-- The older notes and examples live in `oldreadme.md` to keep this README focused on the new structure and deploy path.
-
-## To convert sadtalker response to video:
-
-Sample curl:
-```bash
- curl -v -X POST \
-  -F "face=@/Users/sarthakagrawal/Desktop/agentData/sample.webp;type=image/webp" \
-  -F "audio=@/Users/sarthakagrawal/Desktop/agentData/sample_small.mp3;type=audio/mpeg" \
-  {{api_link}}/generateVideo \
--H "x-api-key: {{api_key}}" -o response.json
-```
-
-## Sadtalker
-
-```bash
-cat response.json | jq -r .video_b64 | base64 --decode > final.mp4
-open final.mp4
-```
-
-## Parler-TTS
-
-```bash
-curl -s "$BASE_URL/tts" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "text": "In today\u2019s top story, markets around the world reacted to a series of unexpected policy announcements. Analysts say the long-term impact will depend on how quickly central banks adjust to the new information.",
-    "max_chars": 400
-  }' > response.json
-
-
-i=0
-jq -r '.chunks[]' response.json | while read -r c; do
-  echo "$c" | base64 -d > "chunk_${i}.wav"   # base64 -D on macOS
-  i=$((i+1))
-done
-```
-
-## SDXL
-```bash
-curl -X POST -s "$BASE_URL/txt2img" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "prompt": "a natural photo of female news anchor in a modern studio, wearing a suit, behind stand, sitting delivering news, slighltly zoomed in 4k, high detail, no camera",
-    "negative_prompt": "blurry, distorted, low quality, text, watermark",
-    "width": 1024,
-    "height": 1024,
-    "num_inference_steps": 40,
-    "guidance_scale": 6.0,
-    "seed": 42
-  }' > response.json
-
-
-jq -r '.image_base64' response.json | base64 -d > sdxl_news.png
-```
-
-## Latte-1 (T2V)
-```bash
-curl -X POST -s "$BASE_URL/t2v" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "prompt": "a natural photo of female news anchor in a modern studio, wearing a suit, behind stand, sitting delivering news, slighltly zoomed in 4k, high detail, no camera",
-    "negative_prompt": "blurry, distorted, low quality, text, watermark",
-    "video_length": 16,
-    "height": 512,
-    "width": 512,
-    "num_inference_steps": 40,
-    "guidance_scale": 6.0,
-    "seed": 42,
-    "fps": 8
-  }' > response.json
-```
-
-## Z-Image
-```bash
-curl -X POST "{}" \
-  -H "Content-Type: application/json" \
-  -d '{
-        "prompt": "Young Chinese woman in red Hanfu, looking towards moon",
-        "height": 1024,
-        "width": 1024,
-        "num_inference_steps": 9,
-        "guidance_scale": 0.0,
-        "seed": 42
-      }'  | jq -r .image_base64 | base64 --decode > output.png
-```
-
-
-## Other Models
-- EchoMimic (talking head)
+- Backend can be deployed to Render (Dockerfile included in `backend/`)
+- Frontend can be deployed to Vercel (`web/`)
+- Hetzner + Dokploy walkthrough: `docs/hetzner-dokploy.md`
