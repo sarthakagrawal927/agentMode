@@ -1,0 +1,78 @@
+name: Reddit Warmup
+
+on:
+  schedule:
+    - cron: "15 6 * * *"
+    - cron: "15 18 * * *"
+  workflow_dispatch:
+
+jobs:
+  warmup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    concurrency:
+      group: reddit-warmup
+      cancel-in-progress: false
+    steps:
+      - name: Warm subreddit cache and snapshots
+        env:
+          API_BASE_URL: ${{ secrets.AGENTDATA_API_BASE_URL }}
+          LIMIT: "20"
+          MAX_SUBREDDITS: "15"
+          FALLBACK_SUBREDDITS: "LocalLLaMA,MachineLearning,Programming,Python,Startups,Devops,AI_Agents,cscareerquestions,financialindependence"
+        run: |
+          set -euo pipefail
+
+          if [ -z "${API_BASE_URL:-}" ]; then
+            echo "Missing required secret AGENTDATA_API_BASE_URL."
+            exit 1
+          fi
+
+          echo "Using API base URL: ${API_BASE_URL}"
+          prompts_json="$(curl -fsS "${API_BASE_URL}/prompts" || true)"
+
+          mapfile -t subreddits < <(echo "${prompts_json}" | jq -r '.prompts | keys[]' 2>/dev/null || true)
+          if [ "${#subreddits[@]}" -eq 0 ]; then
+            IFS=',' read -r -a subreddits <<< "${FALLBACK_SUBREDDITS}"
+            echo "Falling back to static subreddit list (${#subreddits[@]} items)."
+          fi
+
+          if [ "${#subreddits[@]}" -gt "${MAX_SUBREDDITS}" ]; then
+            subreddits=("${subreddits[@]:0:${MAX_SUBREDDITS}}")
+          fi
+
+          durations=("1d" "1week")
+          if [ "$(date -u +%u)" = "7" ]; then
+            durations+=("1month")
+          fi
+
+          total=0
+          failures=0
+
+          for subreddit in "${subreddits[@]}"; do
+            subreddit="$(echo "${subreddit}" | xargs)"
+            [ -z "${subreddit}" ] && continue
+
+            for duration in "${durations[@]}"; do
+              total=$((total + 1))
+              payload="$(jq -nc \
+                --arg subreddit "${subreddit}" \
+                --arg duration "${duration}" \
+                --argjson limit "${LIMIT}" \
+                '{subreddit_name: $subreddit, duration: $duration, limit: $limit}')"
+
+              echo "Warmup ${total}: r/${subreddit} (${duration})"
+              if ! curl -fsS \
+                -X POST "${API_BASE_URL}/research/subreddit" \
+                -H "Content-Type: application/json" \
+                --data "${payload}" >/dev/null; then
+                failures=$((failures + 1))
+                echo "Failed: r/${subreddit} (${duration})"
+              fi
+            done
+          done
+
+          echo "Completed ${total} warmup calls with ${failures} failures."
+          if [ "${failures}" -gt 0 ]; then
+            exit 1
+          fi

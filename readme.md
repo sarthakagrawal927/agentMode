@@ -87,3 +87,12 @@ Open `http://localhost:3000`.
 - Backend can be deployed to Render (Dockerfile included in `backend/`)
 - Frontend can be deployed to Vercel (`web/`)
 - Hetzner + Dokploy walkthrough: `docs/hetzner-dokploy.md`
+
+## Scheduled Warmups (No Render Cron)
+
+- Uses GitHub Actions workflow: `.github/workflows/reddit-warmup.yml`
+- Schedule: `06:15 UTC` and `18:15 UTC` daily
+- Calls `POST /api/research/subreddit` to prewarm cache and snapshots
+- Required GitHub repo secret:
+  - `AGENTDATA_API_BASE_URL` (example: `https://agentdata-backend.onrender.com/api`)
+- Supports manual runs through `workflow_dispatch`

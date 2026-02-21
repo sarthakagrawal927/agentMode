@@ -1,20 +1,26 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import SubredditHeader from '@/components/SubredditHeader';
-import RedditThreads from '@/components/RedditThreads';
 import { api } from '@/services/api';
 import { useRouter } from 'next/navigation';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
-import { ExternalLink, Sparkles, Settings, Square, Calendar as CalendarIcon } from 'lucide-react';
-import { useIsMobile } from '@/hooks/use-mobile';
+import { Calendar as CalendarIcon, ChevronDown, ExternalLink, Settings, Sparkles, Square } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { AuthUser, getStoredUser, getAuthHeaders } from '@/lib/auth';
 import { Input } from '@/components/ui/input';
 
-const ADMIN_EMAIL = process.env.NEXT_PUBLIC_ADMIN_EMAIL || '';
+const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+const ADMIN_EMAILS = new Set(
+  [
+    process.env.NEXT_PUBLIC_ADMIN_EMAIL || '',
+    process.env.NEXT_PUBLIC_ADMIN_EMAILS || '',
+  ]
+    .flatMap((entry) => entry.split(','))
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean),
+);
 
 const PERIOD_MAP: Record<string, string> = {
   day: '1d',
@@ -28,6 +34,26 @@ const PERIOD_SLUGS = [
   { slug: 'month', label: 'Month' },
 ];
 
+type SummaryItem = {
+  title?: string;
+  desc?: string;
+  sourceId?: string[];
+};
+
+type PostComment = {
+  id?: string;
+  body?: string;
+  score?: number;
+};
+
+type ResearchPost = {
+  id?: string;
+  title?: string;
+  selftext?: string;
+  score?: number;
+  comments?: PostComment[];
+};
+
 interface SubredditClientProps {
   subreddit: string;
   initialResearch: any | null;
@@ -35,6 +61,30 @@ interface SubredditClientProps {
   period: string;
   isArchive: boolean;
   availableDates?: string[];
+}
+
+function toDisplayDate(dateText: string): string {
+  if (!DATE_REGEX.test(dateText)) return dateText;
+  const [y, m, d] = dateText.split('-');
+  return `${d}/${m}/${y}`;
+}
+
+function toSourceLink(subreddit: string, sourceId: unknown): string | null {
+  if (!Array.isArray(sourceId) || sourceId.length === 0) return null;
+  const postId = sourceId[0];
+  const commentId = sourceId[1];
+  if (typeof postId !== 'string' || !postId.trim()) return null;
+  if (typeof commentId === 'string' && commentId.trim()) {
+    return `https://www.reddit.com/r/${subreddit}/comments/${postId}/comment/${commentId}`;
+  }
+  return `https://www.reddit.com/r/${subreddit}/comments/${postId}`;
+}
+
+function extractTakeaway(summaryText: string): string | null {
+  const normalized = summaryText.trim();
+  if (!normalized) return null;
+  const firstParagraph = normalized.split(/\n+/)[0]?.trim();
+  return firstParagraph || null;
 }
 
 export default function SubredditClient({
@@ -45,13 +95,11 @@ export default function SubredditClient({
   isArchive,
   availableDates = [],
 }: SubredditClientProps) {
-  const [redditInfo, setRedditInfo] = useState<any>(null);
   const [researchInfo, setResearchInfo] = useState<any>(initialResearch);
   const [postsLoading, setPostsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
   const [prompt, setPrompt] = useState<string>(initialPrompt?.prompt || '');
-  const [isDefaultPrompt, setIsDefaultPrompt] = useState<boolean>(initialPrompt?.isDefault ?? true);
   const [savingPrompt, setSavingPrompt] = useState<boolean>(false);
   const [promptMessage, setPromptMessage] = useState<string | null>(null);
   const [aiSummary, setAiSummary] = useState<string>(() => {
@@ -66,15 +114,13 @@ export default function SubredditClient({
   const [aiError, setAiError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000/api';
-  const [aiPromptUsed, setAiPromptUsed] = useState<string | null>(() => {
-    if (initialResearch && typeof initialResearch.ai_prompt_used === 'string') return initialResearch.ai_prompt_used;
-    return null;
-  });
   const [promptDialogOpen, setPromptDialogOpen] = useState<boolean>(false);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
-  const [dateInput, setDateInput] = useState(() => new Date().toISOString().split('T')[0]);
+  const [dateInput, setDateInput] = useState(() => (
+    DATE_REGEX.test(period) ? period : new Date().toISOString().split('T')[0]
+  ));
 
-  const isAdmin = !!authUser && !!ADMIN_EMAIL && authUser.email.toLowerCase() === ADMIN_EMAIL.toLowerCase();
+  const isAdmin = !!authUser && ADMIN_EMAILS.has(authUser.email.toLowerCase());
 
   useEffect(() => {
     setAuthUser(getStoredUser());
@@ -104,7 +150,6 @@ export default function SubredditClient({
           setResearchInfo(data);
           if (Array.isArray(data.ai_summary_structured)) setAiSummaryStructured(data.ai_summary_structured);
           if (typeof data.ai_summary === 'string') setAiSummary(data.ai_summary);
-          if (typeof data.ai_prompt_used === 'string') setAiPromptUsed(data.ai_prompt_used);
         }
       } catch (err) {
         console.error('Client-side fetch failed:', err);
@@ -118,45 +163,20 @@ export default function SubredditClient({
   }, [subreddit, period]);
 
   useEffect(() => {
-    const fetchAbout = async () => {
-      try {
-        const resp = await fetch(
-          `https://www.reddit.com/r/${subreddit}/about.json`,
-          { headers: { 'User-Agent': 'SubredditResearch/1.0.0' } }
-        );
-        if (!resp.ok) throw new Error('Failed to fetch Reddit data');
-        const raw = await resp.json();
-        const d = raw?.data;
-        setRedditInfo({
-          name: d?.display_name,
-          title: d?.title,
-          description: d?.public_description,
-          subscribers: d?.subscribers,
-          activeUsers: d?.active_user_count,
-          created: d?.created_utc ? new Date(d.created_utc * 1000).toISOString() : null,
-          nsfw: d?.over18,
-          url: `https://reddit.com/r/${subreddit}`,
-        });
-      } catch (err) {
-        console.error('Error fetching subreddit info:', err);
-      }
-    };
-    fetchAbout();
-  }, [subreddit]);
+    if (DATE_REGEX.test(period)) setDateInput(period);
+  }, [period]);
 
   if (error) return (
-    <main className="container mx-auto px-6 py-8">
-      <div className="text-red-500">{error}</div>
+    <main className="mx-auto w-full max-w-[1240px] px-4 py-10 sm:px-6 lg:px-8">
+      <div className="rounded-xl border border-[#2c1520] bg-[#14090f] px-4 py-3 text-red-300">{error}</div>
     </main>
   );
 
   const generateButtonLabel = aiGenerating
     ? 'Generating...'
-    : ((!!aiSummary || !!aiSummaryStructured)
-      ? (aiPromptUsed === prompt ? 'Summary cached' : 'Re-generate')
-      : 'Generate');
+    : 'Regenerate Summary';
 
-  const generateDisabled = aiGenerating || (((!!aiSummary || !!aiSummaryStructured) && aiPromptUsed === prompt));
+  const generateDisabled = aiGenerating;
 
   const handleGenerate = async () => {
     try {
@@ -217,16 +237,13 @@ export default function SubredditClient({
         if (Array.isArray(parsed)) {
           setAiSummaryStructured(parsed);
           setAiSummary('');
-          setAiPromptUsed(prompt);
         } else {
           if (!Array.isArray(aiSummaryStructured) || (aiSummaryStructured?.length ?? 0) === 0) {
             setAiSummary(buffer);
           }
-          setAiPromptUsed(prompt);
         }
       } catch {
-        setAiPromptUsed(prompt);
-        setAiSummary((prev) => (Array.isArray(aiSummaryStructured) && aiSummaryStructured.length > 0 ? '' : buffer));
+        setAiSummary(Array.isArray(aiSummaryStructured) && aiSummaryStructured.length > 0 ? '' : buffer);
       }
     } catch (e: any) {
       if (e?.name === 'AbortError') {
@@ -247,149 +264,260 @@ export default function SubredditClient({
     }
   };
 
-  const posts = researchInfo?.top_posts ?? [];
+  const posts: ResearchPost[] = Array.isArray(researchInfo?.top_posts) ? researchInfo.top_posts : [];
+  const topSources = [...posts]
+    .sort((a, b) => (Number(b.score || 0) - Number(a.score || 0)))
+    .slice(0, 8);
+  const summaryItems: SummaryItem[] = Array.isArray(aiSummaryStructured) ? aiSummaryStructured : [];
+  const keyTrend = summaryItems[0];
+  const notableDiscussions = summaryItems.slice(1, 5);
+  const fallbackSummary = aiSummary.trim();
+  const actionableTakeaway = summaryItems[summaryItems.length - 1]?.desc
+    || extractTakeaway(fallbackSummary)
+    || 'Use the strongest source threads to pressure-test assumptions before making major product or engineering decisions.';
+  const dateSnapshotsLabel = `${availableDates.length} snapshot${availableDates.length === 1 ? '' : 's'} available`;
 
   return (
-    <main className="container mx-auto px-6 py-8 space-y-6">
-      {redditInfo && <SubredditHeader info={redditInfo} />}
+    <main className="mx-auto w-full max-w-[1240px] px-4 pb-10 pt-8 sm:px-6 lg:px-8">
+      <section className="overflow-hidden rounded-2xl border border-[#18253b] bg-[#060b14] shadow-[0_24px_80px_rgba(0,0,0,0.55)]">
+        <div className="border-b border-[#142137] px-5 py-6 sm:px-8">
+          <div className="flex flex-wrap items-end justify-between gap-4">
+            <div>
+              <p className="text-xs uppercase tracking-[0.18em] text-[#6f86ad]">r/{subreddit}</p>
+              <h1 className="mt-2 text-4xl font-semibold tracking-tight text-[#f4f8ff]">Summary</h1>
+            </div>
+            {isAdmin && !isArchive && (
+              <Button
+                onClick={() => setPromptDialogOpen(true)}
+                variant="outline"
+                className="h-10 rounded-md border-[#22375a] bg-[#0b1526] px-3 text-[#d7e6ff] hover:bg-[#10203a] hover:text-[#eff5ff]"
+              >
+                <Settings size={14} className="mr-1.5" />
+                Prompt
+              </Button>
+            )}
+          </div>
 
-      {/* Controls bar */}
-      <div className="flex flex-wrap items-center gap-3">
-        {/* Period tabs */}
-        <div className="flex items-center rounded-lg border bg-muted/50 p-0.5">
-          {PERIOD_SLUGS.map(({ slug, label }) => (
-            <Link
-              key={slug}
-              href={`/r/${subreddit}/${slug}`}
-              className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${
-                period === slug
-                  ? 'bg-background text-foreground shadow-sm'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
+          <div className="mt-5 flex flex-wrap items-center gap-2">
+            {isArchive && (
+              <span className="rounded-md border border-[#564111] bg-[#251c07] px-3 py-1 text-xs font-semibold uppercase tracking-wide text-[#f3c770]">
+                Archived: {toDisplayDate(period)}
+              </span>
+            )}
+
+            <div className="flex items-center gap-2 rounded-md border border-[#22344f] bg-[#0b1527] px-3 py-1.5">
+              <CalendarIcon size={14} className="text-[#8096bb]" />
+              <Input
+                type="date"
+                value={dateInput}
+                onChange={(e) => setDateInput(e.target.value)}
+                className="h-7 w-[145px] border-0 bg-transparent px-0 text-sm text-[#dce8ff] focus-visible:ring-0 focus-visible:ring-offset-0"
+              />
+            </div>
+
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleDateNavigate}
+              className="h-9 rounded-md border-[#22344f] bg-[#0b1527] px-4 text-sm text-[#dce8ff] hover:bg-[#10203a] hover:text-[#f4f8ff]"
             >
-              {label}
-            </Link>
-          ))}
-        </div>
-
-        {/* Date picker */}
-        <div className="flex items-center gap-1.5">
-          <CalendarIcon size={14} className="text-muted-foreground" />
-          <Input
-            type="date"
-            value={dateInput}
-            onChange={(e) => setDateInput(e.target.value)}
-            className="w-40 h-8 text-sm"
-          />
-          <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={handleDateNavigate}>
-            Go
-          </Button>
-        </div>
-
-        {availableDates.length > 0 && (
-          <span className="text-xs text-muted-foreground">
-            {availableDates.length} snapshot{availableDates.length !== 1 ? 's' : ''}
-          </span>
-        )}
-
-        {isArchive && (
-          <span className="px-2.5 py-1 text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 rounded-full">
-            Archive: {period}
-          </span>
-        )}
-
-        {!isArchive && researchInfo?.cachedAt && (
-          <span className="text-xs text-muted-foreground ml-auto">
-            Updated {new Date(researchInfo.cachedAt).toLocaleString()}
-          </span>
-        )}
-      </div>
-
-      {/* Admin actions */}
-      {isAdmin && !isArchive && (
-        <div className="flex items-center gap-2">
-          <Button
-            size="sm"
-            onClick={handleGenerate}
-            disabled={generateDisabled}
-            className="gap-1.5"
-          >
-            <Sparkles size={14} />
-            {generateButtonLabel}
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => setPromptDialogOpen(true)} className="gap-1.5">
-            <Settings size={14} />
-            Prompt
-          </Button>
-          {aiGenerating && (
-            <Button size="sm" variant="destructive" onClick={() => { try { abortRef.current?.abort(); } catch { } }} className="gap-1.5">
-              <Square size={14} />
-              Stop
+              Go to date
             </Button>
-          )}
-          {aiError && <span className="text-xs text-destructive">{aiError}</span>}
-        </div>
-      )}
 
-      {postsLoading ? (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="h-32 bg-muted animate-pulse rounded-lg" />
-          ))}
+            {availableDates.length > 0 && (
+              <span className="text-sm text-[#8197bb]">{dateSnapshotsLabel}</span>
+            )}
+
+            {!isArchive && researchInfo?.cachedAt && (
+              <span className="text-xs text-[#5f769e]">
+                Updated {new Date(researchInfo.cachedAt).toLocaleString()}
+              </span>
+            )}
+
+            <div className="ml-auto flex items-center rounded-lg border border-[#1f2f4a] bg-[#09121f] p-1">
+              {PERIOD_SLUGS.map(({ slug, label }) => (
+                <Link
+                  key={slug}
+                  href={`/r/${subreddit}/${slug}`}
+                  className={`rounded-md px-4 py-1.5 text-sm font-medium transition-colors ${
+                    period === slug
+                      ? 'bg-[#2f75ff] text-white'
+                      : 'text-[#8da3c5] hover:bg-[#12233f] hover:text-[#e7f0ff]'
+                  }`}
+                >
+                  {label}
+                </Link>
+              ))}
+            </div>
+          </div>
+
+          {aiError && <div className="mt-3 text-sm text-[#ff9a9a]">{aiError}</div>}
         </div>
-      ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* AI Summary */}
-          <div className="space-y-3">
-            <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">AI Summary</h2>
-            <div className="border rounded-lg bg-card p-4 min-h-[300px] max-h-[70vh] overflow-auto">
-              {Array.isArray(aiSummaryStructured) && aiSummaryStructured.length > 0 ? (
-                <ul className="space-y-3">
-                  {aiSummaryStructured.map((item, idx) => {
-                    const ids: string[] = Array.isArray(item?.sourceId) ? item.sourceId : [];
-                    const postId = ids[0];
-                    const commentId = ids[1];
-                    const href = commentId
-                      ? `https://www.reddit.com/r/${subreddit}/comments/${postId}/comment/${commentId}`
-                      : `https://www.reddit.com/r/${subreddit}/comments/${postId}`;
+
+        {postsLoading ? (
+          <div className="grid grid-cols-1 gap-5 p-5 sm:p-8 lg:grid-cols-[minmax(0,1.75fr)_minmax(0,1fr)]">
+            {Array.from({ length: 2 }).map((_, i) => (
+              <div key={i} className="h-[420px] animate-pulse rounded-xl bg-[#0d1626]" />
+            ))}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-5 p-5 sm:p-8 lg:grid-cols-[minmax(0,1.75fr)_minmax(0,1fr)]">
+            <section className="rounded-xl border border-[#1a2940] bg-[#070f1b] p-5 sm:p-6">
+              <div className="flex items-center gap-2">
+                <Sparkles size={16} className="text-[#6ea8ff]" />
+                <h2 className="text-3xl font-semibold tracking-tight text-[#f3f8ff]">Daily Insights</h2>
+              </div>
+
+              <div className="mt-7 space-y-7">
+                <section>
+                  <h3 className="text-[1.35rem] font-semibold tracking-tight text-[#edf4ff]">
+                    {keyTrend?.title || 'Key Trends in Engineering Culture'}
+                  </h3>
+                  <p className="mt-3 text-[1.03rem] leading-relaxed text-[#becde7]">
+                    {keyTrend?.desc || fallbackSummary || 'No summary available for this snapshot.'}
+                  </p>
+                </section>
+
+                <section>
+                  <h3 className="text-[1.35rem] font-semibold tracking-tight text-[#edf4ff]">Notable Discussions</h3>
+                  {notableDiscussions.length > 0 ? (
+                    <ul className="mt-3 space-y-3 text-[1.02rem] text-[#becde7]">
+                      {notableDiscussions.map((item, idx) => {
+                        const sourceHref = toSourceLink(subreddit, item?.sourceId);
+                        return (
+                          <li key={`${item?.title || 'summary'}-${idx}`} className="flex gap-3">
+                            <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-[#6ea8ff]" />
+                            <p className="leading-relaxed">
+                              <span className="font-semibold text-[#e4eeff]">{item?.title || 'Untitled'}:</span>{' '}
+                              {item?.desc || 'No detail provided.'}
+                              {sourceHref && (
+                                <>
+                                  {' '}
+                                  <Link
+                                    href={sourceHref}
+                                    target="_blank"
+                                    className="inline-flex items-center gap-1 text-[#7db0ff] hover:text-[#9ec3ff]"
+                                  >
+                                    from r/{subreddit}
+                                    <ExternalLink size={12} />
+                                  </Link>
+                                </>
+                              )}
+                            </p>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  ) : (
+                    <p className="mt-3 text-[1.02rem] leading-relaxed text-[#8da2c4]">
+                      No structured discussion highlights are available yet.
+                    </p>
+                  )}
+                </section>
+
+                <section className="rounded-lg border border-[#20406b] bg-[#081831] p-4">
+                  <h4 className="text-lg font-semibold text-[#8fbfff]">Actionable Takeaway</h4>
+                  <p className="mt-2 text-[1.02rem] leading-relaxed text-[#c8daf6]">{actionableTakeaway}</p>
+                </section>
+              </div>
+
+              <div className="mt-8 border-t border-[#15263e] pt-5">
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  {isAdmin && !isArchive ? (
+                    <>
+                      {aiGenerating && (
+                        <Button
+                          size="sm"
+                          variant="destructive"
+                          onClick={() => { try { abortRef.current?.abort(); } catch { } }}
+                          className="h-10 rounded-md px-4"
+                        >
+                          <Square size={14} className="mr-1.5" />
+                          Stop
+                        </Button>
+                      )}
+                      <Button
+                        onClick={handleGenerate}
+                        disabled={generateDisabled}
+                        className="h-10 rounded-md bg-[#2f75ff] px-5 text-sm font-medium text-white hover:bg-[#2a67df]"
+                      >
+                        <Sparkles size={14} className="mr-2" />
+                        {generateButtonLabel}
+                      </Button>
+                    </>
+                  ) : (
+                    <span className="text-xs text-[#6f86ad]">
+                      {isArchive ? 'Archive view is read-only.' : 'Admin access is required to regenerate summary.'}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </section>
+
+            <aside className="overflow-hidden rounded-xl border border-[#1a2940] bg-[#070f1b]">
+              <div className="flex items-center justify-between border-b border-[#142137] px-4 py-3">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#8ea3c7]">Top Sources</p>
+                <p className="text-xs text-[#5f769e]">Sorted by Impact</p>
+              </div>
+
+              <div className="max-h-[720px] overflow-auto">
+                {topSources.length > 0 ? (
+                  topSources.map((post, idx) => {
+                    const title = post?.title || 'Untitled source';
+                    const score = Math.round(Number(post?.score || 0));
+                    const sourceUrl = post?.id
+                      ? `https://www.reddit.com/r/${subreddit}/comments/${post.id}`
+                      : null;
+                    const topComment = Array.isArray(post?.comments) ? post.comments[0] : null;
+
                     return (
-                      <li key={idx} className="border rounded-lg p-3 bg-background/50 hover:bg-background transition-colors">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0 space-y-1">
-                            <div className="font-medium text-sm">{item?.title || 'Untitled'}</div>
-                            {item?.desc && <div className="text-sm text-muted-foreground leading-relaxed">{item.desc}</div>}
+                      <details
+                        key={`${post?.id || 'post'}-${idx}`}
+                        className="border-b border-[#142137] px-4 py-3 last:border-b-0"
+                      >
+                        <summary className="flex cursor-pointer list-none items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-lg font-medium leading-snug text-[#eef5ff]">{title}</p>
+                            <p className="mt-2 text-sm text-[#8fa5c8]">Score: {score} • Reddit r/{subreddit}</p>
                           </div>
-                          {postId && (
-                            <Link href={href} target="_blank" aria-label="Open on Reddit" className="shrink-0 text-muted-foreground hover:text-foreground transition-colors">
-                              <ExternalLink size={14} />
+                          <ChevronDown size={16} className="mt-1 shrink-0 text-[#6f86ad]" />
+                        </summary>
+
+                        <div className="space-y-3 pb-1 pt-3 text-sm text-[#c4d3ec]">
+                          {post?.selftext ? (
+                            <p className="whitespace-pre-wrap leading-relaxed">{post.selftext}</p>
+                          ) : (
+                            <p className="leading-relaxed text-[#8da2c4]">No post body available.</p>
+                          )}
+
+                          {topComment?.body && (
+                            <p className="rounded-md border border-[#183152] bg-[#0a1527] p-3 leading-relaxed text-[#b8cae8]">
+                              <span className="font-semibold text-[#dce8ff]">Top comment:</span> {topComment.body}
+                            </p>
+                          )}
+
+                          {sourceUrl && (
+                            <Link
+                              href={sourceUrl}
+                              target="_blank"
+                              className="inline-flex items-center gap-1 text-[#7db0ff] hover:text-[#9ec3ff]"
+                            >
+                              Open thread
+                              <ExternalLink size={13} />
                             </Link>
                           )}
                         </div>
-                      </li>
+                      </details>
                     );
-                  })}
-                </ul>
-              ) : aiSummary ? (
-                <div className="text-sm leading-relaxed whitespace-pre-wrap">{aiSummary}</div>
-              ) : (
-                <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
-                  {isAdmin && !isArchive ? 'Click Generate to create an AI summary' : 'No summary available'}
-                </div>
-              )}
-            </div>
+                  })
+                ) : (
+                  <div className="px-4 py-6 text-sm text-[#8da2c4]">No sources available for this period.</div>
+                )}
+              </div>
+            </aside>
           </div>
-
-          {/* Posts */}
-          <div className="space-y-3">
-            <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">
-              Top Posts ({posts.length})
-            </h2>
-            <div className="border rounded-lg bg-card p-4 min-h-[300px] max-h-[70vh] overflow-auto">
-              <RedditThreads subreddit={subreddit} posts={posts} />
-            </div>
-          </div>
-        </div>
-      )}
+        )}
+      </section>
 
       {/* Prompt dialog */}
       <Dialog open={promptDialogOpen} onOpenChange={setPromptDialogOpen}>
@@ -428,7 +556,6 @@ export default function SubredditClient({
                     );
                     if (!resp.ok) throw new Error('Failed to save');
                     const saved = await resp.json();
-                    setIsDefaultPrompt(false);
                     setPrompt(saved.prompt);
                     setPromptMessage('Saved');
                   } catch (e: any) {
