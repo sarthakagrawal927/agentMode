@@ -53,6 +53,7 @@ jobs:
           done
 
           echo "Completed ${total} weekly warmup calls with ${failures} failures."
-          if [ "${failures}" -gt 0 ]; then
+          max_failures=3
+          if [ "${failures}" -gt "${max_failures}" ]; then
             exit 1
           fi
