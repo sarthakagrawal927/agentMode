@@ -342,6 +342,32 @@ export default function SubredditClient({
   }, []);
 
   useEffect(() => {
+    if (isArchive) return;
+    let cancelled = false;
+    const controller = new AbortController();
+    const loadPrompt = async () => {
+      try {
+        const resp = await fetch(
+          `${API_BASE_URL}/prompts/${encodeURIComponent(subreddit)}`,
+          { cache: 'no-store', signal: controller.signal },
+        );
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const loadedPrompt = `${data?.prompt ?? ''}`.trim();
+        if (!loadedPrompt || cancelled) return;
+        setPrompt((current) => (current.trim() ? current : loadedPrompt));
+      } catch {
+        // noop
+      }
+    };
+    loadPrompt();
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [API_BASE_URL, subreddit, isArchive]);
+
+  useEffect(() => {
     if (researchInfo || !isHydrated) return;
     const fetchClientSide = async () => {
       try {
