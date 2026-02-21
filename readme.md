@@ -16,13 +16,15 @@ AgentData is a full-stack subreddit research tool. It collects top Reddit posts,
 
 ## Architecture
 
-- `backend/`: FastAPI service + Postgres cache/snapshot/prompt storage
+- `cloudflare/backend/`: Cloudflare Workers backend in production
+- `backend/`: legacy FastAPI backend (kept for local compatibility/reference)
 - `web/`: Next.js 14 UI (App Router)
-- `docs/`: deployment notes (including Hetzner + Dokploy)
+- `docs/`: deployment and migration notes
 
 ## Tech Stack
 
-- Backend: FastAPI, asyncpg, asyncpraw, OpenAI API
+- Backend (prod): Cloudflare Workers (TypeScript), `pg`, Reddit OAuth API, OpenAI API
+- Backend (legacy): FastAPI, asyncpg, asyncpraw
 - Frontend: Next.js, React, TypeScript, Tailwind
 - Data store: Postgres/CockroachDB (`cache_entries`, `prompts`, `snapshots`)
 
@@ -34,12 +36,14 @@ Backend (`backend/.env`):
 - `OPENAI_API_KEY` (required for summaries)
 - `REDDIT_CLIENT_ID` (required)
 - `REDDIT_CLIENT_SECRET` (required)
-- `ADMIN_EMAIL` (required for prompt management + summary generation)
+- `ADMIN_EMAIL` (required for prompt management + summary generation, set to `sarthakagrawal927@gmail.com` for current admin)
+- `ADMIN_EMAILS` (optional list, use `sarthakagrawal927@gmail.com` or comma-separated emails)
 
 Frontend (`web/.env.local`):
 
 - `NEXT_PUBLIC_API_BASE_URL` (required, example: `http://localhost:8000/api`)
-- `NEXT_PUBLIC_ADMIN_EMAIL` (optional but recommended)
+- `NEXT_PUBLIC_ADMIN_EMAIL` (recommended, set to `sarthakagrawal927@gmail.com` for current admin UX)
+- `NEXT_PUBLIC_ADMIN_EMAILS` (optional list, use `sarthakagrawal927@gmail.com` or comma-separated emails)
 - `NEXT_PUBLIC_GOOGLE_CLIENT_ID` (optional, needed for Google sign-in)
 
 ## Local Development
@@ -84,19 +88,22 @@ Open `http://localhost:3000`.
 
 ## Deployment
 
-- Backend can be deployed to Render (Dockerfile included in `backend/`)
-- Frontend can be deployed to Vercel (`web/`)
+- Frontend is deployed on Vercel (`agent-mode`): `https://agent-mode.vercel.app`
+- Backend is deployed on Cloudflare Workers: `https://agentdata-backend-prod.sarthakagrawal927.workers.dev`
+- Render backend for this project has been decommissioned
+- Cloudflare backend config and deploy package: `cloudflare/backend/`
+- Cloudflare migration notes: `docs/cloudflare-migration-plan.md`
 - Hetzner + Dokploy walkthrough: `docs/hetzner-dokploy.md`
 
-## Scheduled Warmups (No Render Cron)
+## Scheduled Warmups
 
 - Daily workflow: `.github/workflows/reddit-warmup-daily.yml`
   - Schedule: `06:15 UTC` daily
-  - Warms only `1d`
+  - Warms only `1d` (daily only)
 - Weekly workflow: `.github/workflows/reddit-warmup-weekly.yml`
   - Schedule: `06:20 UTC` on Sunday
-  - Warms only `1week`
+  - Warms only `1week` (weekly only)
 - Both workflows warm only curated technical, entrepreneurial, and Indian-market subreddits.
 - Required GitHub repo secret:
-  - `AGENTDATA_API_BASE_URL` (example: `https://agentdata-backend.onrender.com/api`)
+  - `AGENTDATA_API_BASE_URL` (example: `https://agentdata-backend-prod.sarthakagrawal927.workers.dev/api`)
 - Supports manual runs through `workflow_dispatch` for each workflow.

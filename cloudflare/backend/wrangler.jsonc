@@ -1,0 +1,17 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "agentdata-backend-prod",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-02-21",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "workers_dev": true,
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    "ADMIN_EMAIL": "sarthakagrawal927@gmail.com",
+    "ADMIN_EMAILS": "sarthakagrawal927@gmail.com"
+  }
+}

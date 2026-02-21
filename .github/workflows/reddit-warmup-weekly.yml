@@ -1,6 +1,7 @@
 name: Reddit Warmup Weekly
 
 on:
+  # Weekly run only (Sunday, UTC)
   schedule:
     - cron: "20 6 * * 0"
   workflow_dispatch:
@@ -18,7 +19,8 @@ jobs:
           API_BASE_URL: ${{ secrets.AGENTDATA_API_BASE_URL }}
           LIMIT: "20"
           DURATION: "1week"
-          SUBREDDITS: "LocalLLaMA,Langchain,ArtificialIntelligence,MachineLearning,Programming,AI_Agents,Javascript,Python,Datascience,ExperiencedDevs,Devops,cscareerquestions,Startups,Startup,StartupResources,Entrepreneurship,Entrepreneur,IndieHackers,SideProject,ycombinator,IndiaInvestments,IndianStreetBets,IndianStockMarket,DalalStreetTalks"
+          # Highly technical + entrepreneurial + Indian market communities only.
+          SUBREDDITS: "LocalLLaMA,Langchain,MachineLearning,Programming,AI_Agents,Javascript,Python,ExperiencedDevs,Devops,Startups,Entrepreneurship,Entrepreneur,IndieHackers,ycombinator,IndiaInvestments,IndianStreetBets,IndianStockMarket,DalalStreetTalks"
         run: |
           set -euo pipefail
 

@@ -1,69 +1,46 @@
-# Welcome to your Lovable project
+# AgentData Web
 
-## Project info
+Next.js 14 frontend for the AgentData subreddit research product.
 
-**URL**: https://lovable.dev/projects/1281bd44-bd7e-4ea3-810c-e06812c450e2
+## Runtime
 
-## How can I edit this code?
+- Node.js 20+ (Vercel production currently uses Node 22)
+- npm
 
-There are several ways of editing your application.
+## Environment Variables
 
-**Use Lovable**
+Create `web/.env.local`:
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/1281bd44-bd7e-4ea3-810c-e06812c450e2) and start prompting.
+```bash
+NEXT_PUBLIC_API_BASE_URL=http://localhost:8000/api
+NEXT_PUBLIC_ADMIN_EMAIL=sarthakagrawal927@gmail.com
+NEXT_PUBLIC_ADMIN_EMAILS=sarthakagrawal927@gmail.com
+# Optional for Google sign-in
+NEXT_PUBLIC_GOOGLE_CLIENT_ID=
+```
 
-Changes made via Lovable will be committed automatically to this repo.
+## Local Development
 
-**Use your preferred IDE**
-
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
-
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
-
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
+```bash
+cd web
+npm install
 npm run dev
 ```
 
-**Edit a file directly in GitHub**
+App runs on `http://localhost:3000`.
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+## Production Build
 
-**Use GitHub Codespaces**
+```bash
+cd web
+npm run build
+npm run start
+```
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+## Deployment
 
-## What technologies are used for this project?
-
-This project is built with .
-
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
-
-## How can I deploy this project?
-
-Simply open [Lovable](https://lovable.dev/projects/1281bd44-bd7e-4ea3-810c-e06812c450e2) and click on Share -> Publish.
-
-## I want to use a custom domain - is that possible?
-
-We don't support custom domains (yet). If you want to deploy your project under your own domain then we recommend using Netlify. Visit our docs for more details: [Custom domains](https://docs.lovable.dev/tips-tricks/custom-domain/)
+- Canonical frontend host: Vercel
+- Project: `agent-mode`
+- Current production URL: `https://agent-mode.vercel.app`
+- Required production environment variable:
+  - `NEXT_PUBLIC_API_BASE_URL=https://agentdata-backend-prod.sarthakagrawal927.workers.dev/api`

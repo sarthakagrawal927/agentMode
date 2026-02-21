@@ -13,6 +13,7 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 # Copy project metadata and install deps with uv
 COPY pyproject.toml ./
 COPY uv.lock* ./
+COPY README.md ./
 RUN uv sync --no-dev
 
 # Copy application code

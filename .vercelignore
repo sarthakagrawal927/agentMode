@@ -1,0 +1,13 @@
+# Keep Vercel uploads focused on the frontend app.
+SadTalker
+sampleIO
+models
+backend
+cloudflare
+docs
+.github
+.claude
+.vscode
+render.yaml
+oldreadme.md
+readme.md

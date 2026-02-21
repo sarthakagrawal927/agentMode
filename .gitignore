@@ -1,11 +1,60 @@
-__pycache__
-my-crawler
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+.claude/
+
+# Secrets / local env
 .env
-*.csv
+.env.*
+!.env.example
+
+backend/.env
+backend/.env.*
+web/.env.local
+web/.env*.local
+cloudflare/backend/.dev.vars
+cloudflare/backend/.env
+cloudflare/backend/.env.*
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+backend/.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node / frontend
+node_modules/
+web/.next/
+web/out/
+web/.vercel/
+.npm/
+.pnpm-store/
+yarn-debug.log*
+yarn-error.log*
+npm-debug.log*
+
+# Cloudflare / Wrangler local state
+.wrangler/
+cloudflare/backend/.wrangler/
+
+# Project-local generated files / scratch
+backend/.cache/
+my-crawler/
 task.md
-web/.next
-backend/.cache
-SadTalker
-sampleIO
-.vscode
+*.csv
+
+# Large local directories not part of deployable app
+SadTalker/
+sampleIO/
+models/modal-examples/
+
+# One-off local test files
 models/parler/test.py
+.vercel/
