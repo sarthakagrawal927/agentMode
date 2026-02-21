@@ -1,4 +1,5 @@
 import { Metadata } from 'next';
+import { redirect } from 'next/navigation';
 import SubredditClient from '../SubredditClient';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000/api';
@@ -8,13 +9,11 @@ export const revalidate = 86400; // 24h ISR
 const PERIOD_MAP: Record<string, string> = {
   day: '1d',
   week: '1week',
-  month: '1month',
 };
 
 const PERIOD_LABELS: Record<string, string> = {
   day: 'Daily',
   week: 'Weekly',
-  month: 'Monthly',
 };
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -72,20 +71,6 @@ async function fetchPrompt(subreddit: string) {
   }
 }
 
-async function fetchDates(subreddit: string): Promise<string[]> {
-  try {
-    const resp = await fetch(
-      `${API_BASE_URL}/research/subreddit/${encodeURIComponent(subreddit)}/dates`,
-      { next: { revalidate: 86400 }, signal: withTimeout(5000) },
-    );
-    if (!resp.ok) return [];
-    const data = await resp.json();
-    return data.dates || [];
-  } catch {
-    return [];
-  }
-}
-
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { subreddit, period } = params;
   const isDate = DATE_RE.test(period);
@@ -103,12 +88,12 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 export default async function SubredditPeriodPage({ params }: PageProps) {
   const { subreddit, period } = params;
   const isDate = DATE_RE.test(period);
+  if (!isDate && period === 'month') {
+    redirect(`/r/${subreddit}/week`);
+  }
 
   if (isDate) {
-    const [snapshot, dates] = await Promise.all([
-      fetchSnapshot(subreddit, period),
-      fetchDates(subreddit),
-    ]);
+    const snapshot = await fetchSnapshot(subreddit, period);
     return (
       <SubredditClient
         subreddit={subreddit}
@@ -116,17 +101,15 @@ export default async function SubredditPeriodPage({ params }: PageProps) {
         initialPrompt={null}
         period={period}
         isArchive
-        availableDates={dates}
       />
     );
   }
 
   // Named period
   const duration = PERIOD_MAP[period] || '1week';
-  const [research, promptData, dates] = await Promise.all([
+  const [research, promptData] = await Promise.all([
     fetchResearch(subreddit, duration),
     fetchPrompt(subreddit),
-    fetchDates(subreddit),
   ]);
 
   return (
@@ -136,7 +119,6 @@ export default async function SubredditPeriodPage({ params }: PageProps) {
       initialPrompt={promptData}
       period={period}
       isArchive={false}
-      availableDates={dates}
     />
   );
 }

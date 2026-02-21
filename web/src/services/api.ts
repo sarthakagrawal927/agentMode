@@ -8,7 +8,7 @@ interface ResearchParams {
 
 interface SubredditParams {
   subreddit_name: string;
-  duration?: "1d" | "1week" | "1month";
+  duration?: "1d" | "1week";
   limit?: number;
 }
 

@@ -14,7 +14,7 @@ export const metadata: Metadata = {
   },
 };
 
-type Duration = '1d' | '1week' | '1month';
+type Duration = '1d' | '1week';
 
 type FeedItem = {
   subreddit: string;

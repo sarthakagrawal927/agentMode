@@ -2,18 +2,18 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { api } from '@/services/api';
-import { useRouter } from 'next/navigation';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
-import { Calendar as CalendarIcon, ChevronDown, ExternalLink, Settings, Sparkles, Square } from 'lucide-react';
+import { ChevronDown, ExternalLink, Settings, Sparkles, Square } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { AuthUser, getStoredUser, getAuthHeaders } from '@/lib/auth';
-import { Input } from '@/components/ui/input';
 
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+const FALLBACK_ADMIN_EMAIL = 'sarthakagrawal927@gmail.com';
 const ADMIN_EMAILS = new Set(
   [
+    FALLBACK_ADMIN_EMAIL,
     process.env.NEXT_PUBLIC_ADMIN_EMAIL || '',
     process.env.NEXT_PUBLIC_ADMIN_EMAILS || '',
   ]
@@ -25,13 +25,11 @@ const ADMIN_EMAILS = new Set(
 const PERIOD_MAP: Record<string, string> = {
   day: '1d',
   week: '1week',
-  month: '1month',
 };
 
 const PERIOD_SLUGS = [
   { slug: 'day', label: 'Day' },
   { slug: 'week', label: 'Week' },
-  { slug: 'month', label: 'Month' },
 ];
 
 type SummaryItem = {
@@ -60,7 +58,6 @@ interface SubredditClientProps {
   initialPrompt: { prompt: string; isDefault: boolean } | null;
   period: string;
   isArchive: boolean;
-  availableDates?: string[];
 }
 
 function toDisplayDate(dateText: string): string {
@@ -93,12 +90,10 @@ export default function SubredditClient({
   initialPrompt,
   period,
   isArchive,
-  availableDates = [],
 }: SubredditClientProps) {
   const [researchInfo, setResearchInfo] = useState<any>(initialResearch);
-  const [postsLoading, setPostsLoading] = useState(false);
+  const [postsLoading, setPostsLoading] = useState(!initialResearch);
   const [error, setError] = useState<string | null>(null);
-  const router = useRouter();
   const [prompt, setPrompt] = useState<string>(initialPrompt?.prompt || '');
   const [savingPrompt, setSavingPrompt] = useState<boolean>(false);
   const [promptMessage, setPromptMessage] = useState<string | null>(null);
@@ -116,14 +111,13 @@ export default function SubredditClient({
   const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000/api';
   const [promptDialogOpen, setPromptDialogOpen] = useState<boolean>(false);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
-  const [dateInput, setDateInput] = useState(() => (
-    DATE_REGEX.test(period) ? period : new Date().toISOString().split('T')[0]
-  ));
+  const [isHydrated, setIsHydrated] = useState(false);
 
-  const isAdmin = !!authUser && ADMIN_EMAILS.has(authUser.email.toLowerCase());
+  const isAdmin = !!authUser?.email && ADMIN_EMAILS.has(authUser.email.toLowerCase());
 
   useEffect(() => {
     setAuthUser(getStoredUser());
+    setIsHydrated(true);
     const interval = setInterval(() => {
       setAuthUser(getStoredUser());
     }, 1000);
@@ -131,7 +125,7 @@ export default function SubredditClient({
   }, []);
 
   useEffect(() => {
-    if (researchInfo) return;
+    if (researchInfo || !isHydrated) return;
     const fetchClientSide = async () => {
       try {
         setPostsLoading(true);
@@ -160,11 +154,7 @@ export default function SubredditClient({
     };
     fetchClientSide();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [subreddit, period]);
-
-  useEffect(() => {
-    if (DATE_REGEX.test(period)) setDateInput(period);
-  }, [period]);
+  }, [subreddit, period, isHydrated]);
 
   if (error) return (
     <main className="mx-auto w-full max-w-[1240px] px-4 py-10 sm:px-6 lg:px-8">
@@ -257,13 +247,6 @@ export default function SubredditClient({
     }
   };
 
-  const handleDateNavigate = () => {
-    const trimmed = dateInput.trim();
-    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
-      router.push(`/r/${subreddit}/${trimmed}`);
-    }
-  };
-
   const posts: ResearchPost[] = Array.isArray(researchInfo?.top_posts) ? researchInfo.top_posts : [];
   const topSources = [...posts]
     .sort((a, b) => (Number(b.score || 0) - Number(a.score || 0)))
@@ -272,10 +255,9 @@ export default function SubredditClient({
   const keyTrend = summaryItems[0];
   const notableDiscussions = summaryItems.slice(1, 5);
   const fallbackSummary = aiSummary.trim();
-  const actionableTakeaway = summaryItems[summaryItems.length - 1]?.desc
-    || extractTakeaway(fallbackSummary)
-    || 'Use the strongest source threads to pressure-test assumptions before making major product or engineering decisions.';
-  const dateSnapshotsLabel = `${availableDates.length} snapshot${availableDates.length === 1 ? '' : 's'} available`;
+  const actionableTakeaway = summaryItems.length > 0
+    ? summaryItems[summaryItems.length - 1]?.desc || null
+    : extractTakeaway(fallbackSummary);
 
   return (
     <main className="mx-auto w-full max-w-[1240px] px-4 pb-10 pt-8 sm:px-6 lg:px-8">
@@ -305,28 +287,7 @@ export default function SubredditClient({
               </span>
             )}
 
-            <div className="flex items-center gap-2 rounded-md border border-[#22344f] bg-[#0b1527] px-3 py-1.5">
-              <CalendarIcon size={14} className="text-[#8096bb]" />
-              <Input
-                type="date"
-                value={dateInput}
-                onChange={(e) => setDateInput(e.target.value)}
-                className="h-7 w-[145px] border-0 bg-transparent px-0 text-sm text-[#dce8ff] focus-visible:ring-0 focus-visible:ring-offset-0"
-              />
-            </div>
-
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={handleDateNavigate}
-              className="h-9 rounded-md border-[#22344f] bg-[#0b1527] px-4 text-sm text-[#dce8ff] hover:bg-[#10203a] hover:text-[#f4f8ff]"
-            >
-              Go to date
-            </Button>
-
-            {availableDates.length > 0 && (
-              <span className="text-sm text-[#8197bb]">{dateSnapshotsLabel}</span>
-            )}
+            {/* Date navigation is temporarily disabled */}
 
             {!isArchive && researchInfo?.cachedAt && (
               <span className="text-xs text-[#5f769e]">
@@ -354,7 +315,7 @@ export default function SubredditClient({
           {aiError && <div className="mt-3 text-sm text-[#ff9a9a]">{aiError}</div>}
         </div>
 
-        {postsLoading ? (
+        {postsLoading || (!researchInfo && isHydrated) ? (
           <div className="grid grid-cols-1 gap-5 p-5 sm:p-8 lg:grid-cols-[minmax(0,1.75fr)_minmax(0,1fr)]">
             {Array.from({ length: 2 }).map((_, i) => (
               <div key={i} className="h-[420px] animate-pulse rounded-xl bg-[#0d1626]" />
@@ -415,10 +376,12 @@ export default function SubredditClient({
                   )}
                 </section>
 
-                <section className="rounded-lg border border-[#20406b] bg-[#081831] p-4">
-                  <h4 className="text-lg font-semibold text-[#8fbfff]">Actionable Takeaway</h4>
-                  <p className="mt-2 text-[1.02rem] leading-relaxed text-[#c8daf6]">{actionableTakeaway}</p>
-                </section>
+                {actionableTakeaway && (
+                  <section className="rounded-lg border border-[#20406b] bg-[#081831] p-4">
+                    <h4 className="text-lg font-semibold text-[#8fbfff]">Actionable Takeaway</h4>
+                    <p className="mt-2 text-[1.02rem] leading-relaxed text-[#c8daf6]">{actionableTakeaway}</p>
+                  </section>
+                )}
               </div>
 
               <div className="mt-8 border-t border-[#15263e] pt-5">
@@ -478,7 +441,20 @@ export default function SubredditClient({
                         <summary className="flex cursor-pointer list-none items-start justify-between gap-3">
                           <div className="min-w-0">
                             <p className="text-lg font-medium leading-snug text-[#eef5ff]">{title}</p>
-                            <p className="mt-2 text-sm text-[#8fa5c8]">Score: {score} • Reddit r/{subreddit}</p>
+                            <div className="mt-2 flex flex-wrap items-center gap-2">
+                              <p className="text-sm text-[#8fa5c8]">Score: {score} • Reddit r/{subreddit}</p>
+                              {sourceUrl && (
+                                <Link
+                                  href={sourceUrl}
+                                  target="_blank"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="inline-flex items-center gap-1 text-xs text-[#7db0ff] hover:text-[#9ec3ff]"
+                                >
+                                  Open post
+                                  <ExternalLink size={12} />
+                                </Link>
+                              )}
+                            </div>
                           </div>
                           <ChevronDown size={16} className="mt-1 shrink-0 text-[#6f86ad]" />
                         </summary>

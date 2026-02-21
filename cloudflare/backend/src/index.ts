@@ -191,6 +191,51 @@ function parseSummaryStructured(text: string): JsonRecord[] | null {
   return null;
 }
 
+function truncateText(value: unknown, maxLen: number): string {
+  const text = `${value ?? ""}`.trim();
+  if (text.length <= maxLen) return text;
+  return `${text.slice(0, maxLen)}...`;
+}
+
+function slimPayloadForModel(payload: JsonRecord): JsonRecord {
+  const subreddit = truncateText(payload.subreddit, 120);
+  const period = truncateText(payload.period, 32);
+  const rawPosts = Array.isArray(payload.top_posts) ? payload.top_posts : [];
+
+  const topPosts = rawPosts.slice(0, 12).map((item) => {
+    const post = asRecord(item) || {};
+    const rawComments = Array.isArray(post.comments) ? post.comments : [];
+    const comments = rawComments.slice(0, 8).map((commentItem) => {
+      const comment = asRecord(commentItem) || {};
+      const rawReplies = Array.isArray(comment.replies) ? comment.replies : [];
+      const replies = rawReplies.slice(0, 3).map((replyItem) => {
+        const reply = asRecord(replyItem) || {};
+        return {
+          id: truncateText(reply.id, 64),
+          score: Number(reply.score ?? 0),
+          body: truncateText(reply.body, 280),
+        };
+      });
+      return {
+        id: truncateText(comment.id, 64),
+        score: Number(comment.score ?? 0),
+        body: truncateText(comment.body, 420),
+        replies,
+      };
+    });
+
+    return {
+      id: truncateText(post.id, 64),
+      title: truncateText(post.title, 280),
+      selftext: truncateText(post.selftext, 1100),
+      score: Number(post.score ?? 0),
+      comments,
+    };
+  });
+
+  return { subreddit, period, top_posts: topPosts };
+}
+
 async function parseRequestJson(request: Request): Promise<JsonRecord> {
   const raw = await request.text();
   if (!raw.trim()) return {};
@@ -616,6 +661,12 @@ async function getTopPostsForSubreddit(
   const children = Array.isArray(listingData?.children) ? listingData.children : [];
 
   const posts: RedditPost[] = [];
+  const fallbackCandidates: Array<{
+    id: string | null;
+    title: string;
+    selftext: string;
+    score: number;
+  }> = [];
   for (const child of children) {
     const node = asRecord(child);
     if (!node || `${node.kind ?? ""}` !== "t3") continue;
@@ -626,12 +677,18 @@ async function getTopPostsForSubreddit(
     if (createdUtc < cutoffSeconds) continue;
 
     const score = Number(data.score ?? 0);
+    const postId = data.id ? `${data.id}` : null;
+    const fallbackItem = {
+      id: postId,
+      title: `${data.title ?? ""}`,
+      selftext: `${data.selftext ?? ""}`,
+      score,
+    };
     if (score < postThreshold) {
-      if (posts.length >= 5) break;
+      fallbackCandidates.push(fallbackItem);
       continue;
     }
 
-    const postId = data.id ? `${data.id}` : null;
     const comments = postId
       ? await getTopCommentsForPost(
           env,
@@ -644,13 +701,42 @@ async function getTopPostsForSubreddit(
 
     posts.push({
       id: postId,
-      title: `${data.title ?? ""}`,
-      selftext: `${data.selftext ?? ""}`,
+      title: fallbackItem.title,
+      selftext: fallbackItem.selftext,
       score,
       comments,
     });
 
     if (posts.length >= limit) break;
+  }
+
+  if (posts.length < limit && fallbackCandidates.length > 0) {
+    const existingIds = new Set(
+      posts
+        .map((item) => item.id)
+        .filter((item): item is string => Boolean(item)),
+    );
+    for (const candidate of fallbackCandidates) {
+      if (posts.length >= limit) break;
+      if (candidate.id && existingIds.has(candidate.id)) continue;
+      const comments = candidate.id
+        ? await getTopCommentsForPost(
+            env,
+            subreddit,
+            candidate.id,
+            Math.max(1, commentThreshold * 0.5),
+            Math.max(1, replyThreshold * 0.5),
+          )
+        : [];
+      posts.push({
+        id: candidate.id,
+        title: candidate.title,
+        selftext: candidate.selftext,
+        score: candidate.score,
+        comments,
+      });
+      if (candidate.id) existingIds.add(candidate.id);
+    }
   }
 
   return posts;
@@ -686,7 +772,7 @@ Key Rule: Give information, instead of telling what info the post gives. Respond
       model: "gpt-4o-mini",
       messages: [
         { role: "system", content: enrichedSystemPrompt },
-        { role: "user", content: JSON.stringify(redditPayload) },
+        { role: "user", content: JSON.stringify(slimPayloadForModel(redditPayload)) },
       ],
       temperature: 0.1,
     }),
@@ -716,6 +802,60 @@ Key Rule: Give information, instead of telling what info the post gives. Respond
   throw new HttpError(502, "OpenAI response did not contain summary content");
 }
 
+async function maybeAttachAiSummary(
+  env: Env,
+  subredditName: string,
+  duration: "1d" | "1week" | "1month",
+  baseCache: JsonRecord,
+): Promise<JsonRecord> {
+  if (
+    Array.isArray(baseCache.ai_summary_structured) ||
+    typeof baseCache.ai_summary === "string"
+  ) {
+    return baseCache;
+  }
+
+  const topPosts = Array.isArray(baseCache.top_posts) ? baseCache.top_posts : [];
+  if (topPosts.length === 0) return baseCache;
+
+  try {
+    const promptMap = await readPromptMap(env);
+    const customPrompt = promptMap[subredditName];
+    const systemPrompt = customPrompt?.trim()
+      ? customPrompt
+      : DEFAULT_PROMPT.replace("{subreddit}", subredditName);
+
+    const redditPayload: JsonRecord = {
+      subreddit: subredditName,
+      period: duration,
+      top_posts: topPosts,
+    };
+    const text = await generateSummaryText(
+      env,
+      subredditName,
+      duration,
+      systemPrompt,
+      redditPayload,
+    );
+    const structured = parseSummaryStructured(text);
+
+    if (structured) {
+      return {
+        ...baseCache,
+        ai_summary_structured: structured,
+        ai_prompt_used: systemPrompt,
+      };
+    }
+    return {
+      ...baseCache,
+      ai_summary: text,
+      ai_prompt_used: systemPrompt,
+    };
+  } catch {
+    return baseCache;
+  }
+}
+
 async function handleResearchSubreddit(
   request: Request,
   env: Env,
@@ -726,29 +866,102 @@ async function handleResearchSubreddit(
   const limitRaw = Number(data.limit ?? 20);
   const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.floor(limitRaw) : 20;
   if (!subredditName) throw new HttpError(400, "Subreddit name required");
+  if (
+    ALLOWED_SUBREDDITS.size > 0 &&
+    !ALLOWED_SUBREDDITS.has(subredditName.toLowerCase())
+  ) {
+    throw new HttpError(400, "Subreddit is not in the curated allowed list");
+  }
 
   const cacheKey = `${subredditName.toLowerCase()}::limit=${limit}::duration=${duration}`;
   const cached = await getCache(env, SUBREDDIT_CACHE_NAMESPACE, cacheKey);
-  if (cached) return jsonResponse(cached);
+  if (cached) {
+    const cachedRecord = asRecord(cached);
+    if (!cachedRecord) return jsonResponse(cached);
+
+    const cachedTopPosts = Array.isArray(cachedRecord.top_posts)
+      ? cachedRecord.top_posts
+      : [];
+    if (cachedTopPosts.length === 0) {
+      const refreshed: JsonRecord = {
+        ...cachedRecord,
+        subreddit: subredditName,
+        period: duration,
+        cachedAt: new Date().toISOString(),
+        top_posts: await getTopPostsForSubreddit(env, subredditName, limit, duration),
+      };
+      const enrichedRefreshed = await maybeAttachAiSummary(
+        env,
+        subredditName,
+        duration,
+        refreshed,
+      );
+      await setCache(
+        env,
+        SUBREDDIT_CACHE_NAMESPACE,
+        cacheKey,
+        enrichedRefreshed,
+        ONE_DAY_TTL_SECONDS,
+      );
+      await saveSnapshot(env, subredditName, duration, enrichedRefreshed).catch(
+        () => undefined,
+      );
+      return jsonResponse(enrichedRefreshed);
+    }
+
+    const hadAiSummary =
+      Array.isArray(cachedRecord.ai_summary_structured) ||
+      typeof cachedRecord.ai_summary === "string";
+    const enrichedCached = await maybeAttachAiSummary(
+      env,
+      subredditName,
+      duration,
+      cachedRecord,
+    );
+    const hasAiSummaryNow =
+      Array.isArray(enrichedCached.ai_summary_structured) ||
+      typeof enrichedCached.ai_summary === "string";
+    if (!hadAiSummary && hasAiSummaryNow) {
+      await setCache(
+        env,
+        SUBREDDIT_CACHE_NAMESPACE,
+        cacheKey,
+        enrichedCached,
+        ONE_DAY_TTL_SECONDS,
+      );
+      await saveSnapshot(env, subredditName, duration, enrichedCached).catch(
+        () => undefined,
+      );
+    }
+    return jsonResponse(enrichedCached);
+  }
 
   const topPosts = await getTopPostsForSubreddit(env, subredditName, limit, duration);
-  const result = {
+  const result: JsonRecord = {
     subreddit: subredditName,
     period: duration,
     cachedAt: new Date().toISOString(),
     top_posts: topPosts,
   };
+  const enrichedResult = await maybeAttachAiSummary(
+    env,
+    subredditName,
+    duration,
+    result,
+  );
 
   await setCache(
     env,
     SUBREDDIT_CACHE_NAMESPACE,
     cacheKey,
-    result,
+    enrichedResult,
     ONE_DAY_TTL_SECONDS,
   );
-  await saveSnapshot(env, subredditName, duration, result).catch(() => undefined);
+  await saveSnapshot(env, subredditName, duration, enrichedResult).catch(
+    () => undefined,
+  );
 
-  return jsonResponse(result);
+  return jsonResponse(enrichedResult);
 }
 
 async function handleSnapshot(

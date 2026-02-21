@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { ExternalLink, ArrowRight } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 
-type Duration = '1d' | '1week' | '1month';
+type Duration = '1d' | '1week';
 
 type FeedItem = {
   subreddit: string;
@@ -33,13 +33,11 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8
 const DURATION_SLUGS: Record<string, string> = {
   '1d': 'day',
   '1week': 'week',
-  '1month': 'month',
 };
 
 const DURATIONS = [
   { value: '1d' as Duration, label: 'Day' },
   { value: '1week' as Duration, label: 'Week' },
-  { value: '1month' as Duration, label: 'Month' },
 ];
 
 interface DiscoverClientProps {
