@@ -30,6 +30,8 @@ type RedditPost = {
 
 const SUBREDDIT_CACHE_NAMESPACE = "subreddit_research";
 const ONE_DAY_TTL_SECONDS = 24 * 60 * 60;
+const SUMMARY_RETRY_COOLDOWN_MS = 6 * 60 * 60 * 1000;
+const EMPTY_POSTS_REFRESH_COOLDOWN_MS = 2 * 60 * 60 * 1000;
 const DEFAULT_PROMPT =
   "Analyze top posts and comments for r/{subreddit}. Summarize key themes, actionable insights, and representative quotes.";
 
@@ -170,7 +172,72 @@ function normalizeDuration(input: unknown): "1d" | "1week" | "1month" {
   return "1week";
 }
 
-function parseSummaryStructured(text: string): JsonRecord[] | null {
+function normalizeSourceId(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+  const normalized = value
+    .map((item) => `${item ?? ""}`.trim())
+    .filter(Boolean)
+    .slice(0, 2);
+  if (normalized.length === 0) return null;
+  return normalized;
+}
+
+function normalizeSummaryPoint(value: unknown): JsonRecord | null {
+  const rec = asRecord(value);
+  if (!rec) return null;
+  const title = `${rec.title ?? ""}`.trim();
+  const desc = `${rec.desc ?? ""}`.trim();
+  if (!title && !desc) return null;
+  const sourceId = normalizeSourceId(rec.sourceId);
+  const out: JsonRecord = {};
+  if (title) out.title = title;
+  if (desc) out.desc = desc;
+  if (sourceId) out.sourceId = sourceId;
+  return out;
+}
+
+function normalizeSummaryStructured(value: unknown): JsonRecord | null {
+  if (Array.isArray(value)) {
+    const points = value
+      .map((item) => normalizeSummaryPoint(item))
+      .filter((item): item is JsonRecord => Boolean(item));
+    if (points.length === 0) return null;
+
+    const first = points[0];
+    const last = points.length > 1 ? points[points.length - 1] : null;
+    const middle =
+      points.length > 2 ? points.slice(1, points.length - 1) : [];
+    return {
+      key_trend: first,
+      notable_discussions: middle,
+      key_action: last && last !== first ? last : undefined,
+    };
+  }
+
+  const rec = asRecord(value);
+  if (!rec) return null;
+  const keyTrend = normalizeSummaryPoint(rec.key_trend || rec.overview);
+  const keyAction = normalizeSummaryPoint(
+    rec.key_action || rec.actionable_takeaway || rec.action_item,
+  );
+  const notableRaw = Array.isArray(rec.notable_discussions)
+    ? rec.notable_discussions
+    : Array.isArray(rec.discussion_points)
+      ? rec.discussion_points
+      : [];
+  const notable = notableRaw
+    .map((item) => normalizeSummaryPoint(item))
+    .filter((item): item is JsonRecord => Boolean(item));
+
+  if (!keyTrend && !keyAction && notable.length === 0) return null;
+  return {
+    key_trend: keyTrend || undefined,
+    notable_discussions: notable,
+    key_action: keyAction || undefined,
+  };
+}
+
+function parseSummaryStructured(text: string): JsonRecord | null {
   const trimmed = text.trim();
   if (!trimmed) return null;
   const withoutFences = trimmed
@@ -180,15 +247,20 @@ function parseSummaryStructured(text: string): JsonRecord[] | null {
     .trim();
   try {
     const parsed = JSON.parse(withoutFences);
-    if (Array.isArray(parsed)) {
-      return parsed.filter(
-        (item) => item && typeof item === "object" && !Array.isArray(item),
-      ) as JsonRecord[];
-    }
+    return normalizeSummaryStructured(parsed);
   } catch {
     return null;
   }
-  return null;
+}
+
+function hasStructuredSummary(value: unknown): boolean {
+  const rec = asRecord(value);
+  if (!rec) return false;
+  if (rec.key_trend) return true;
+  if (Array.isArray(rec.notable_discussions) && rec.notable_discussions.length > 0)
+    return true;
+  if (rec.key_action) return true;
+  return false;
 }
 
 function truncateText(value: unknown, maxLen: number): string {
@@ -760,7 +832,14 @@ async function generateSummaryText(
 
 Context: Today is ${nowIso}. Data period: ${periodLabel} (key: ${duration}) for r/${subreddit}.
 
-Key Rule: Give information, instead of telling what info the post gives. Respond ONLY with a JSON array (no preamble, no code fences). Each item must be: {"title": string, "desc": string, "sourceId": [postId, optionalCommentId] }. Use exact IDs from the provided data. If referencing a post only, sourceId = [postId]. If referencing a specific comment, sourceId = [postId, commentId]. No extra keys, no trailing commas.`;
+Key Rule: Give information, instead of telling what info the post gives.
+Respond ONLY with a JSON object (no preamble, no code fences) in this exact shape:
+{
+  "key_trend": {"title": string, "desc": string, "sourceId": [postId, optionalCommentId]},
+  "notable_discussions": [{"title": string, "desc": string, "sourceId": [postId, optionalCommentId]}],
+  "key_action": {"title": "Key Action", "desc": string, "sourceId": [postId, optionalCommentId]}
+}
+Use exact IDs from the provided data. If referencing a post only, sourceId = [postId]. If referencing a specific comment, sourceId = [postId, commentId]. Keep notable_discussions between 3 and 6 items. No extra keys, no trailing commas.`;
 
   const openAiResp = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -808,15 +887,62 @@ async function maybeAttachAiSummary(
   duration: "1d" | "1week" | "1month",
   baseCache: JsonRecord,
 ): Promise<JsonRecord> {
+  const normalizedExisting = normalizeSummaryStructured(baseCache.ai_summary_structured);
+  if (normalizedExisting) {
+    if (hasStructuredSummary(baseCache.ai_summary_structured)) return baseCache;
+    return {
+      ...baseCache,
+      ai_summary_structured: normalizedExisting,
+    };
+  }
+
+  if (typeof baseCache.ai_summary === "string") {
+    const parsedFromText = parseSummaryStructured(baseCache.ai_summary);
+    if (parsedFromText) {
+      return {
+        ...baseCache,
+        ai_summary_structured: parsedFromText,
+        ai_summary_generation_status: "success",
+        ai_summary_generation_attempted_at:
+          `${baseCache.ai_summary_generation_attempted_at ?? ""}`.trim() ||
+          new Date().toISOString(),
+        ai_summary_generation_error: null,
+      };
+    }
+    const rawStatus = `${baseCache.ai_summary_generation_status ?? ""}`.trim();
+    const rawAttemptedAt = Date.parse(
+      `${baseCache.ai_summary_generation_attempted_at ?? ""}`.trim(),
+    );
+    if (
+      rawStatus === "success_raw" &&
+      Number.isFinite(rawAttemptedAt) &&
+      Date.now() - rawAttemptedAt < SUMMARY_RETRY_COOLDOWN_MS
+    ) {
+      return baseCache;
+    }
+  }
+
+  const status = `${baseCache.ai_summary_generation_status ?? ""}`.trim();
+  const attemptedAt = Date.parse(
+    `${baseCache.ai_summary_generation_attempted_at ?? ""}`.trim(),
+  );
   if (
-    Array.isArray(baseCache.ai_summary_structured) ||
-    typeof baseCache.ai_summary === "string"
+    status === "failed" &&
+    Number.isFinite(attemptedAt) &&
+    Date.now() - attemptedAt < SUMMARY_RETRY_COOLDOWN_MS
   ) {
     return baseCache;
   }
 
   const topPosts = Array.isArray(baseCache.top_posts) ? baseCache.top_posts : [];
-  if (topPosts.length === 0) return baseCache;
+  const attemptedAtIso = new Date().toISOString();
+  if (topPosts.length === 0) {
+    return {
+      ...baseCache,
+      ai_summary_generation_status: "skipped_no_posts",
+      ai_summary_generation_attempted_at: attemptedAtIso,
+    };
+  }
 
   try {
     const promptMap = await readPromptMap(env);
@@ -844,15 +970,27 @@ async function maybeAttachAiSummary(
         ...baseCache,
         ai_summary_structured: structured,
         ai_prompt_used: systemPrompt,
+        ai_summary_generation_status: "success",
+        ai_summary_generation_attempted_at: attemptedAtIso,
+        ai_summary_generation_error: null,
       };
     }
     return {
       ...baseCache,
       ai_summary: text,
       ai_prompt_used: systemPrompt,
+      ai_summary_generation_status: "success_raw",
+      ai_summary_generation_attempted_at: attemptedAtIso,
+      ai_summary_generation_error: null,
     };
-  } catch {
-    return baseCache;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "summary generation failed";
+    return {
+      ...baseCache,
+      ai_summary_generation_status: "failed",
+      ai_summary_generation_attempted_at: attemptedAtIso,
+      ai_summary_generation_error: truncateText(detail, 240),
+    };
   }
 }
 
@@ -883,11 +1021,22 @@ async function handleResearchSubreddit(
       ? cachedRecord.top_posts
       : [];
     if (cachedTopPosts.length === 0) {
+      const lastRefreshAttemptMs = Date.parse(
+        `${cachedRecord.top_posts_refresh_attempted_at ?? ""}`.trim(),
+      );
+      if (
+        Number.isFinite(lastRefreshAttemptMs) &&
+        Date.now() - lastRefreshAttemptMs < EMPTY_POSTS_REFRESH_COOLDOWN_MS
+      ) {
+        return jsonResponse(cachedRecord);
+      }
+
       const refreshed: JsonRecord = {
         ...cachedRecord,
         subreddit: subredditName,
         period: duration,
         cachedAt: new Date().toISOString(),
+        top_posts_refresh_attempted_at: new Date().toISOString(),
         top_posts: await getTopPostsForSubreddit(env, subredditName, limit, duration),
       };
       const enrichedRefreshed = await maybeAttachAiSummary(
@@ -910,6 +1059,7 @@ async function handleResearchSubreddit(
     }
 
     const hadAiSummary =
+      hasStructuredSummary(cachedRecord.ai_summary_structured) ||
       Array.isArray(cachedRecord.ai_summary_structured) ||
       typeof cachedRecord.ai_summary === "string";
     const enrichedCached = await maybeAttachAiSummary(
@@ -919,9 +1069,20 @@ async function handleResearchSubreddit(
       cachedRecord,
     );
     const hasAiSummaryNow =
+      hasStructuredSummary(enrichedCached.ai_summary_structured) ||
       Array.isArray(enrichedCached.ai_summary_structured) ||
       typeof enrichedCached.ai_summary === "string";
-    if (!hadAiSummary && hasAiSummaryNow) {
+    const generationAttemptChanged =
+      `${enrichedCached.ai_summary_generation_attempted_at ?? ""}` !==
+      `${cachedRecord.ai_summary_generation_attempted_at ?? ""}`;
+    const summaryShapeChanged =
+      JSON.stringify(enrichedCached.ai_summary_structured ?? null) !==
+      JSON.stringify(cachedRecord.ai_summary_structured ?? null);
+    if (
+      (!hadAiSummary && hasAiSummaryNow) ||
+      generationAttemptChanged ||
+      summaryShapeChanged
+    ) {
       await setCache(
         env,
         SUBREDDIT_CACHE_NAMESPACE,
@@ -929,9 +1090,7 @@ async function handleResearchSubreddit(
         enrichedCached,
         ONE_DAY_TTL_SECONDS,
       );
-      await saveSnapshot(env, subredditName, duration, enrichedCached).catch(
-        () => undefined,
-      );
+      await saveSnapshot(env, subredditName, duration, enrichedCached).catch(() => undefined);
     }
     return jsonResponse(enrichedCached);
   }
@@ -983,7 +1142,22 @@ async function handleSnapshot(
     normalizedDate,
     normalizedPeriod,
   );
-  if (existing !== null) return jsonResponse(existing);
+  if (existing !== null) {
+    const rec = asRecord(existing);
+    if (!rec) return jsonResponse(existing);
+    const normalizedStructured = normalizeSummaryStructured(rec.ai_summary_structured);
+    const parsedFromText =
+      !normalizedStructured && typeof rec.ai_summary === "string"
+        ? parseSummaryStructured(rec.ai_summary)
+        : null;
+    if (normalizedStructured || parsedFromText) {
+      return jsonResponse({
+        ...rec,
+        ai_summary_structured: normalizedStructured || parsedFromText,
+      });
+    }
+    return jsonResponse(existing);
+  }
 
   const duration = normalizedPeriod || "1week";
   const result = {
@@ -1031,7 +1205,20 @@ async function handleFeed(url: URL, env: Env): Promise<Response> {
     }
   }
 
-  const items = [...bestBySubreddit.values()].map((entry) => entry.data);
+  const items = [...bestBySubreddit.values()].map((entry) => {
+    const rec = asRecord(entry.data);
+    if (!rec) return entry.data;
+    const normalizedStructured = normalizeSummaryStructured(rec.ai_summary_structured);
+    const parsedFromText =
+      !normalizedStructured && typeof rec.ai_summary === "string"
+        ? parseSummaryStructured(rec.ai_summary)
+        : null;
+    if (!normalizedStructured && !parsedFromText) return rec;
+    return {
+      ...rec,
+      ai_summary_structured: normalizedStructured || parsedFromText,
+    };
+  });
   return jsonResponse({ duration, items });
 }
 
@@ -1115,9 +1302,10 @@ async function handleSummary(request: Request, env: Env): Promise<Response> {
   const cached = asRecord(await getCache(env, SUBREDDIT_CACHE_NAMESPACE, cacheKey));
   if (cached) {
     const cachedPrompt = `${cached.ai_prompt_used ?? ""}`;
-    if (cachedPrompt === systemPrompt && Array.isArray(cached.ai_summary_structured)) {
+    const cachedStructured = normalizeSummaryStructured(cached.ai_summary_structured);
+    if (cachedPrompt === systemPrompt && cachedStructured) {
       return textResponse(
-        JSON.stringify(cached.ai_summary_structured),
+        JSON.stringify(cachedStructured),
         "application/json; charset=utf-8",
       );
     }
@@ -1147,9 +1335,15 @@ async function handleSummary(request: Request, env: Env): Promise<Response> {
   if (structured) {
     baseCache.ai_summary_structured = structured;
     delete baseCache.ai_summary;
+    baseCache.ai_summary_generation_status = "success";
+    baseCache.ai_summary_generation_attempted_at = new Date().toISOString();
+    baseCache.ai_summary_generation_error = null;
   } else {
     baseCache.ai_summary = text;
     delete baseCache.ai_summary_structured;
+    baseCache.ai_summary_generation_status = "success_raw";
+    baseCache.ai_summary_generation_attempted_at = new Date().toISOString();
+    baseCache.ai_summary_generation_error = null;
   }
   baseCache.ai_prompt_used = systemPrompt;
 

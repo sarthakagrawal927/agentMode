@@ -16,11 +16,21 @@ export const metadata: Metadata = {
 
 type Duration = '1d' | '1week';
 
+type SummaryItem = {
+  title?: string;
+  desc?: string;
+  sourceId?: string[];
+};
+
 type FeedItem = {
   subreddit: string;
   period: Duration;
   cachedAt?: string;
-  ai_summary_structured?: Array<{ title?: string; desc?: string; sourceId?: string[] }>;
+  ai_summary_structured?: {
+    key_trend?: SummaryItem;
+    notable_discussions: SummaryItem[];
+    key_action?: SummaryItem;
+  } | SummaryItem[];
   ai_summary?: string;
   top_posts: Array<{ title: string; selftext?: string; comments?: string[] }>;
 };

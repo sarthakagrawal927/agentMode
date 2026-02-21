@@ -10,11 +10,23 @@ import { Badge } from '@/components/ui/badge';
 
 type Duration = '1d' | '1week';
 
+type SummaryItem = {
+  title?: string;
+  desc?: string;
+  sourceId?: string[];
+};
+
+type SummaryStructured = {
+  key_trend?: SummaryItem;
+  notable_discussions: SummaryItem[];
+  key_action?: SummaryItem;
+};
+
 type FeedItem = {
   subreddit: string;
   period: Duration;
   cachedAt?: string;
-  ai_summary_structured?: Array<{ title?: string; desc?: string; sourceId?: string[] }>;
+  ai_summary_structured?: SummaryStructured | SummaryItem[];
   ai_summary?: string;
   top_posts: Array<{
     title: string;
@@ -39,6 +51,54 @@ const DURATIONS = [
   { value: '1d' as Duration, label: 'Day' },
   { value: '1week' as Duration, label: 'Week' },
 ];
+
+function normalizeSummaryItem(value: unknown): SummaryItem | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const title = `${raw.title ?? ''}`.trim();
+  const desc = `${raw.desc ?? ''}`.trim();
+  if (!title && !desc) return null;
+  return { title, desc };
+}
+
+function normalizeStructured(value: unknown): SummaryStructured | null {
+  if (!value) return null;
+  if (Array.isArray(value)) {
+    const items = value
+      .map((item) => normalizeSummaryItem(item))
+      .filter((item): item is SummaryItem => !!item);
+    if (items.length === 0) return null;
+    return {
+      key_trend: items[0],
+      notable_discussions: items.slice(1, Math.max(1, items.length - 1)),
+      key_action: items.length > 1 ? items[items.length - 1] : undefined,
+    };
+  }
+  if (typeof value !== 'object') return null;
+  const raw = value as Record<string, unknown>;
+  const notableRaw = Array.isArray(raw.notable_discussions) ? raw.notable_discussions : [];
+  const notable = notableRaw
+    .map((item) => normalizeSummaryItem(item))
+    .filter((item): item is SummaryItem => !!item);
+  const keyTrend = normalizeSummaryItem(raw.key_trend);
+  const keyAction = normalizeSummaryItem(raw.key_action);
+  if (!keyTrend && !keyAction && notable.length === 0) return null;
+  return {
+    key_trend: keyTrend || undefined,
+    notable_discussions: notable,
+    key_action: keyAction || undefined,
+  };
+}
+
+function previewItems(item: FeedItem): SummaryItem[] {
+  const structured = normalizeStructured(item.ai_summary_structured);
+  if (!structured) return [];
+  const list: SummaryItem[] = [];
+  if (structured.key_trend) list.push(structured.key_trend);
+  list.push(...structured.notable_discussions);
+  if (structured.key_action) list.push(structured.key_action);
+  return list.slice(0, 4);
+}
 
 interface DiscoverClientProps {
   initialItems: FeedItem[];
@@ -119,7 +179,8 @@ export default function DiscoverClient({ initialItems, initialDuration }: Discov
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
         {items.map((item) => {
-          const hasStructured = Array.isArray(item.ai_summary_structured) && item.ai_summary_structured.length > 0;
+          const preview = previewItems(item);
+          const hasStructured = preview.length > 0;
           const hasSummary = typeof item.ai_summary === 'string' && item.ai_summary.trim().length > 0;
           const hasTopPosts = Array.isArray(item.top_posts) && item.top_posts.length > 0;
           const slug = DURATION_SLUGS[item.period] || 'week';
@@ -146,7 +207,7 @@ export default function DiscoverClient({ initialItems, initialDuration }: Discov
                 <div className="px-4 pb-4 flex-1 overflow-hidden relative">
                   {hasStructured ? (
                     <ul className="space-y-2">
-                      {item.ai_summary_structured!.slice(0, 4).map((s, idx) => (
+                      {preview.map((s, idx) => (
                         <li key={idx} className="text-sm">
                           <div className="font-medium truncate">{s?.title || 'Untitled'}</div>
                           {s?.desc && <div className="text-muted-foreground line-clamp-2 text-xs mt-0.5">{s.desc}</div>}

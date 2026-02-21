@@ -38,6 +38,12 @@ type SummaryItem = {
   sourceId?: string[];
 };
 
+type SummaryStructured = {
+  key_trend?: SummaryItem;
+  notable_discussions: SummaryItem[];
+  key_action?: SummaryItem;
+};
+
 type PostComment = {
   id?: string;
   body?: string;
@@ -84,6 +90,73 @@ function extractTakeaway(summaryText: string): string | null {
   return firstParagraph || null;
 }
 
+function normalizeSummaryItem(value: unknown): SummaryItem | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const title = `${raw.title ?? ''}`.trim();
+  const desc = `${raw.desc ?? ''}`.trim();
+  if (!title && !desc) return null;
+  const sourceId = Array.isArray(raw.sourceId)
+    ? raw.sourceId.map((item) => `${item ?? ''}`.trim()).filter(Boolean).slice(0, 2)
+    : [];
+  return { title, desc, sourceId };
+}
+
+function normalizeSummaryStructured(value: unknown): SummaryStructured | null {
+  if (!value) return null;
+  if (Array.isArray(value)) {
+    const items = value
+      .map((item) => normalizeSummaryItem(item))
+      .filter((item): item is SummaryItem => !!item);
+    if (items.length === 0) return null;
+    const first = items[0];
+    const last = items.length > 1 ? items[items.length - 1] : undefined;
+    const middle = items.length > 2 ? items.slice(1, items.length - 1) : [];
+    return {
+      key_trend: first,
+      notable_discussions: middle,
+      key_action: last && last !== first ? last : undefined,
+    };
+  }
+
+  if (typeof value !== 'object') return null;
+  const raw = value as Record<string, unknown>;
+  const keyTrend = normalizeSummaryItem(raw.key_trend || raw.overview);
+  const keyAction = normalizeSummaryItem(
+    raw.key_action || raw.actionable_takeaway || raw.action_item,
+  );
+  const notableRaw = Array.isArray(raw.notable_discussions)
+    ? raw.notable_discussions
+    : Array.isArray(raw.discussion_points)
+      ? raw.discussion_points
+      : [];
+  const notable = notableRaw
+    .map((item) => normalizeSummaryItem(item))
+    .filter((item): item is SummaryItem => !!item);
+
+  if (!keyTrend && !keyAction && notable.length === 0) return null;
+  return {
+    key_trend: keyTrend || undefined,
+    notable_discussions: notable,
+    key_action: keyAction || undefined,
+  };
+}
+
+function parseSummaryTextAsStructured(text: string): SummaryStructured | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  const withoutFences = trimmed
+    .replace(/^```json\s*/i, '')
+    .replace(/^```\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+  try {
+    return normalizeSummaryStructured(JSON.parse(withoutFences));
+  } catch {
+    return null;
+  }
+}
+
 export default function SubredditClient({
   subreddit,
   initialResearch,
@@ -98,12 +171,21 @@ export default function SubredditClient({
   const [savingPrompt, setSavingPrompt] = useState<boolean>(false);
   const [promptMessage, setPromptMessage] = useState<string | null>(null);
   const [aiSummary, setAiSummary] = useState<string>(() => {
-    if (initialResearch && typeof initialResearch.ai_summary === 'string') return initialResearch.ai_summary;
+    if (initialResearch && typeof initialResearch.ai_summary === 'string') {
+      const parsed = parseSummaryTextAsStructured(initialResearch.ai_summary);
+      if (parsed) return '';
+      return initialResearch.ai_summary;
+    }
     return '';
   });
-  const [aiSummaryStructured, setAiSummaryStructured] = useState<any[] | null>(() => {
-    if (initialResearch && Array.isArray(initialResearch.ai_summary_structured)) return initialResearch.ai_summary_structured;
-    return null;
+  const [aiSummaryStructured, setAiSummaryStructured] = useState<SummaryStructured | null>(() => {
+    if (!initialResearch) return null;
+    return (
+      normalizeSummaryStructured(initialResearch.ai_summary_structured) ||
+      (typeof initialResearch.ai_summary === 'string'
+        ? parseSummaryTextAsStructured(initialResearch.ai_summary)
+        : null)
+    );
   });
   const [aiGenerating, setAiGenerating] = useState<boolean>(false);
   const [aiError, setAiError] = useState<string | null>(null);
@@ -142,8 +224,17 @@ export default function SubredditClient({
         }
         if (data) {
           setResearchInfo(data);
-          if (Array.isArray(data.ai_summary_structured)) setAiSummaryStructured(data.ai_summary_structured);
-          if (typeof data.ai_summary === 'string') setAiSummary(data.ai_summary);
+          const structured =
+            normalizeSummaryStructured(data.ai_summary_structured) ||
+            (typeof data.ai_summary === 'string'
+              ? parseSummaryTextAsStructured(data.ai_summary)
+              : null);
+          setAiSummaryStructured(structured);
+          if (structured) {
+            setAiSummary('');
+          } else if (typeof data.ai_summary === 'string') {
+            setAiSummary(data.ai_summary);
+          }
         }
       } catch (err) {
         console.error('Client-side fetch failed:', err);
@@ -171,7 +262,7 @@ export default function SubredditClient({
   const handleGenerate = async () => {
     try {
       setAiSummary('');
-      setAiSummaryStructured([]);
+      setAiSummaryStructured(null);
       setAiError(null);
       setAiGenerating(true);
       const controller = new AbortController();
@@ -197,43 +288,17 @@ export default function SubredditClient({
         setAiGenerating(false);
         return;
       }
-      if (!resp.body) throw new Error('No response body');
-      const reader = resp.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let ndjsonBuffer = '';
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const chunk = decoder.decode(value, { stream: true });
-        if (!chunk) continue;
-        buffer += chunk;
-        ndjsonBuffer += chunk;
-        const lines = ndjsonBuffer.split(/\r?\n/);
-        ndjsonBuffer = lines.pop() || '';
-        for (const line of lines) {
-          const trimmed = line.trim().startsWith('data:') ? line.trim().slice(5).trim() : line.trim();
-          if (!trimmed) continue;
-          try {
-            const obj = JSON.parse(trimmed);
-            if (obj && typeof obj === 'object') {
-              setAiSummaryStructured((prev: any[] | null) => Array.isArray(prev) ? [...prev, obj] : [obj]);
-            }
-          } catch { }
-        }
+      if (!resp.ok) {
+        const errText = await resp.text();
+        throw new Error(errText || `Failed with ${resp.status}`);
       }
-      try {
-        const parsed = JSON.parse(buffer);
-        if (Array.isArray(parsed)) {
-          setAiSummaryStructured(parsed);
-          setAiSummary('');
-        } else {
-          if (!Array.isArray(aiSummaryStructured) || (aiSummaryStructured?.length ?? 0) === 0) {
-            setAiSummary(buffer);
-          }
-        }
-      } catch {
-        setAiSummary(Array.isArray(aiSummaryStructured) && aiSummaryStructured.length > 0 ? '' : buffer);
+      const bodyText = await resp.text();
+      const structured = parseSummaryTextAsStructured(bodyText);
+      if (structured) {
+        setAiSummaryStructured(structured);
+        setAiSummary('');
+      } else {
+        setAiSummary(bodyText.trim());
       }
     } catch (e: any) {
       if (e?.name === 'AbortError') {
@@ -251,13 +316,12 @@ export default function SubredditClient({
   const topSources = [...posts]
     .sort((a, b) => (Number(b.score || 0) - Number(a.score || 0)))
     .slice(0, 8);
-  const summaryItems: SummaryItem[] = Array.isArray(aiSummaryStructured) ? aiSummaryStructured : [];
-  const keyTrend = summaryItems[0];
-  const notableDiscussions = summaryItems.slice(1, 5);
+  const keyTrend = aiSummaryStructured?.key_trend;
+  const notableDiscussions = (aiSummaryStructured?.notable_discussions || []).slice(0, 6);
+  const keyAction = aiSummaryStructured?.key_action;
   const fallbackSummary = aiSummary.trim();
-  const actionableTakeaway = summaryItems.length > 0
-    ? summaryItems[summaryItems.length - 1]?.desc || null
-    : extractTakeaway(fallbackSummary);
+  const actionableTakeaway = keyAction?.desc || extractTakeaway(fallbackSummary);
+  const keyActionSourceHref = toSourceLink(subreddit, keyAction?.sourceId);
 
   return (
     <main className="mx-auto w-full max-w-[1240px] px-4 pb-10 pt-8 sm:px-6 lg:px-8">
@@ -378,8 +442,18 @@ export default function SubredditClient({
 
                 {actionableTakeaway && (
                   <section className="rounded-lg border border-[#20406b] bg-[#081831] p-4">
-                    <h4 className="text-lg font-semibold text-[#8fbfff]">Actionable Takeaway</h4>
+                    <h4 className="text-lg font-semibold text-[#8fbfff]">{keyAction?.title || 'Key Action'}</h4>
                     <p className="mt-2 text-[1.02rem] leading-relaxed text-[#c8daf6]">{actionableTakeaway}</p>
+                    {keyActionSourceHref && (
+                      <Link
+                        href={keyActionSourceHref}
+                        target="_blank"
+                        className="mt-2 inline-flex items-center gap-1 text-sm text-[#7db0ff] hover:text-[#9ec3ff]"
+                      >
+                        View source
+                        <ExternalLink size={12} />
+                      </Link>
+                    )}
                   </section>
                 )}
               </div>
