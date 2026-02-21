@@ -1,5 +1,8 @@
 # AgentData
 
+![AI Generated](https://ai-percentage-pin.vercel.app/api/ai-percentage?value=60)
+![AI PRs Welcome](https://ai-percentage-pin.vercel.app/api/ai-prs?welcome=yes)
+
 AgentData is a full-stack subreddit research tool. It collects top Reddit posts, caches/snapshots results, and generates AI summaries with source references.
 
 ## What It Does
