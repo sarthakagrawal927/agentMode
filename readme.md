@@ -90,9 +90,13 @@ Open `http://localhost:3000`.
 
 ## Scheduled Warmups (No Render Cron)
 
-- Uses GitHub Actions workflow: `.github/workflows/reddit-warmup.yml`
-- Schedule: `06:15 UTC` and `18:15 UTC` daily
-- Calls `POST /api/research/subreddit` to prewarm cache and snapshots
+- Daily workflow: `.github/workflows/reddit-warmup-daily.yml`
+  - Schedule: `06:15 UTC` daily
+  - Warms only `1d`
+- Weekly workflow: `.github/workflows/reddit-warmup-weekly.yml`
+  - Schedule: `06:20 UTC` on Sunday
+  - Warms only `1week`
+- Both workflows warm only curated technical, entrepreneurial, and Indian-market subreddits.
 - Required GitHub repo secret:
   - `AGENTDATA_API_BASE_URL` (example: `https://agentdata-backend.onrender.com/api`)
-- Supports manual runs through `workflow_dispatch`
+- Supports manual runs through `workflow_dispatch` for each workflow.

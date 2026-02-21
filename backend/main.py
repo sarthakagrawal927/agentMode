@@ -2,6 +2,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel
@@ -52,12 +53,36 @@ DEFAULT_PROMPT = (
 )
 
 
+def _load_allowed_subreddits() -> set[str]:
+    try:
+        prompts_file = Path(__file__).parent / "prompts.json"
+        if not prompts_file.exists():
+            return set()
+        with prompts_file.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return set()
+        return {str(k).strip().lower() for k in data.keys() if str(k).strip()}
+    except Exception:
+        return set()
+
+
+ALLOWED_SUBREDDITS = _load_allowed_subreddits()
+
+
 async def _read_prompt_map() -> dict:
     try:
         pool = get_pool()
         async with pool.acquire() as conn:
             rows = await conn.fetch("SELECT subreddit, prompt FROM prompts")
-        return {row["subreddit"]: row["prompt"] for row in rows}
+        prompt_map = {row["subreddit"]: row["prompt"] for row in rows}
+        if not ALLOWED_SUBREDDITS:
+            return prompt_map
+        return {
+            subreddit: prompt
+            for subreddit, prompt in prompt_map.items()
+            if subreddit.strip().lower() in ALLOWED_SUBREDDITS
+        }
     except Exception:
         return {}
 
@@ -438,6 +463,11 @@ class SavePromptRequest(BaseModel):
 async def save_subreddit_prompt(subreddit: str, data: SavePromptRequest, admin_email: str = Depends(require_admin)):
     try:
         s = subreddit.strip()
+        if ALLOWED_SUBREDDITS and s.lower() not in ALLOWED_SUBREDDITS:
+            raise HTTPException(
+                status_code=400,
+                detail="Subreddit is not in the curated allowed list",
+            )
         new_prompt = (data.prompt or "").strip()
         if not new_prompt:
             raise HTTPException(status_code=400, detail="Prompt must be non-empty")

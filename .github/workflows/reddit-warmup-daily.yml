@@ -1,0 +1,58 @@
+name: Reddit Warmup Daily
+
+on:
+  schedule:
+    - cron: "15 6 * * *"
+  workflow_dispatch:
+
+jobs:
+  warmup-daily:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    concurrency:
+      group: reddit-warmup-daily
+      cancel-in-progress: false
+    steps:
+      - name: Warm daily subreddit cache and snapshots
+        env:
+          API_BASE_URL: ${{ secrets.AGENTDATA_API_BASE_URL }}
+          LIMIT: "20"
+          DURATION: "1d"
+          SUBREDDITS: "LocalLLaMA,Langchain,ArtificialIntelligence,MachineLearning,Programming,AI_Agents,Javascript,Python,Datascience,ExperiencedDevs,Devops,cscareerquestions,Startups,Startup,StartupResources,Entrepreneurship,Entrepreneur,IndieHackers,SideProject,ycombinator,IndiaInvestments,IndianStreetBets,IndianStockMarket,DalalStreetTalks"
+        run: |
+          set -euo pipefail
+
+          if [ -z "${API_BASE_URL:-}" ]; then
+            echo "Missing required secret AGENTDATA_API_BASE_URL."
+            exit 1
+          fi
+
+          IFS=',' read -r -a subreddits <<< "${SUBREDDITS}"
+          total=0
+          failures=0
+
+          for subreddit in "${subreddits[@]}"; do
+            subreddit="$(echo "${subreddit}" | xargs)"
+            [ -z "${subreddit}" ] && continue
+
+            total=$((total + 1))
+            payload="$(jq -nc \
+              --arg subreddit "${subreddit}" \
+              --arg duration "${DURATION}" \
+              --argjson limit "${LIMIT}" \
+              '{subreddit_name: $subreddit, duration: $duration, limit: $limit}')"
+
+            echo "Daily warmup ${total}: r/${subreddit} (${DURATION})"
+            if ! curl -fsS \
+              -X POST "${API_BASE_URL}/research/subreddit" \
+              -H "Content-Type: application/json" \
+              --data "${payload}" >/dev/null; then
+              failures=$((failures + 1))
+              echo "Failed: r/${subreddit} (${DURATION})"
+            fi
+          done
+
+          echo "Completed ${total} daily warmup calls with ${failures} failures."
+          if [ "${failures}" -gt 0 ]; then
+            exit 1
+          fi
