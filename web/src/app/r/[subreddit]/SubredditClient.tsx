@@ -781,37 +781,76 @@ export default function SubredditClient({
           {promptMessage && (
             <span className="text-xs text-muted-foreground">{promptMessage}</span>
           )}
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setPromptDialogOpen(false)}>Cancel</Button>
-            {isAdmin && (
-              <Button
-                onClick={async () => {
-                  try {
-                    setSavingPrompt(true);
-                    setPromptMessage(null);
-                    const resp = await fetch(
-                      `${API_BASE_URL}/prompts/${encodeURIComponent(subreddit)}`,
-                      {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-                        body: JSON.stringify({ prompt }),
-                      },
-                    );
-                    if (!resp.ok) throw new Error('Failed to save');
-                    const saved = await resp.json();
-                    setPrompt(saved.prompt);
-                    setPromptMessage('Saved');
-                  } catch (e: any) {
-                    setPromptMessage('Failed to save');
-                  } finally {
-                    setSavingPrompt(false);
-                  }
-                }}
-                disabled={savingPrompt || !prompt.trim()}
-              >
-                {savingPrompt ? 'Saving...' : 'Save'}
-              </Button>
-            )}
+          <DialogFooter className="flex justify-between sm:justify-between">
+            <div>
+              {isAdmin && (
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={async () => {
+                    if (!confirm(`Remove r/${subreddit} from curated list?`)) return;
+                    try {
+                      setSavingPrompt(true);
+                      setPromptMessage(null);
+                      const resp = await fetch(
+                        `${API_BASE_URL}/prompts/${encodeURIComponent(subreddit)}`,
+                        {
+                          method: 'DELETE',
+                          headers: getAuthHeaders(),
+                        },
+                      );
+                      if (!resp.ok) {
+                        const err = await resp.json().catch(() => null);
+                        throw new Error(err?.detail || 'Failed to remove');
+                      }
+                      setPromptMessage('Removed from curated list');
+                    } catch (e: any) {
+                      setPromptMessage(e?.message || 'Failed to remove');
+                    } finally {
+                      setSavingPrompt(false);
+                    }
+                  }}
+                  disabled={savingPrompt}
+                >
+                  Remove from curated
+                </Button>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <Button variant="ghost" onClick={() => setPromptDialogOpen(false)}>Cancel</Button>
+              {isAdmin && (
+                <Button
+                  onClick={async () => {
+                    try {
+                      setSavingPrompt(true);
+                      setPromptMessage(null);
+                      const resp = await fetch(
+                        `${API_BASE_URL}/prompts/${encodeURIComponent(subreddit)}`,
+                        {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+                          body: JSON.stringify({ prompt }),
+                        },
+                      );
+                      if (!resp.ok) {
+                        const err = await resp.json().catch(() => null);
+                        throw new Error(err?.detail || 'Failed to save');
+                      }
+                      const saved = await resp.json();
+                      setPrompt(saved.prompt);
+                      setPromptMessage(saved.addedToCurated ? 'Saved & added to curated list' : 'Saved');
+                    } catch (e: any) {
+                      setPromptMessage(e?.message || 'Failed to save');
+                    } finally {
+                      setSavingPrompt(false);
+                    }
+                  }}
+                  disabled={savingPrompt || !prompt.trim()}
+                >
+                  {savingPrompt ? 'Saving...' : 'Save'}
+                </Button>
+              )}
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>

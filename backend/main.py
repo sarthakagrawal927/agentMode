@@ -77,25 +77,27 @@ PROMPT_DEFAULTS = _load_prompt_defaults()
 ALLOWED_SUBREDDITS = {k.lower() for k in PROMPT_DEFAULTS.keys()}
 
 
+def _persist_prompt_defaults() -> None:
+    """Write current PROMPT_DEFAULTS back to prompts.json."""
+    try:
+        prompts_file = Path(__file__).parent / "prompts.json"
+        with prompts_file.open("w", encoding="utf-8") as f:
+            json.dump(PROMPT_DEFAULTS, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+    except Exception:
+        pass  # best-effort
+
+
 async def _read_prompt_map() -> dict:
     try:
         pool = get_pool()
         async with pool.acquire() as conn:
             rows = await conn.fetch("SELECT subreddit, prompt FROM prompts")
         db_prompt_map = {row["subreddit"]: row["prompt"] for row in rows}
-        if ALLOWED_SUBREDDITS:
-            db_prompt_map = {
-                subreddit: prompt
-                for subreddit, prompt in db_prompt_map.items()
-                if subreddit.strip().lower() in ALLOWED_SUBREDDITS
-            }
         if not PROMPT_DEFAULTS:
             return db_prompt_map
         merged = dict(PROMPT_DEFAULTS)
-        merged.update({
-            subreddit: prompt
-            for subreddit, prompt in db_prompt_map.items()
-        })
+        merged.update(db_prompt_map)
         return merged
     except Exception:
         return dict(PROMPT_DEFAULTS)
@@ -479,16 +481,45 @@ class SavePromptRequest(BaseModel):
 async def save_subreddit_prompt(subreddit: str, data: SavePromptRequest, admin_email: str = Depends(require_admin)):
     try:
         s = subreddit.strip()
-        if ALLOWED_SUBREDDITS and s.lower() not in ALLOWED_SUBREDDITS:
-            raise HTTPException(
-                status_code=400,
-                detail="Subreddit is not in the curated allowed list",
-            )
         new_prompt = (data.prompt or "").strip()
         if not new_prompt:
             raise HTTPException(status_code=400, detail="Prompt must be non-empty")
         await _write_prompt_map(s, new_prompt)
-        return {"status": "ok", "subreddit": s, "prompt": new_prompt}
+        # Add to curated list if new
+        added_to_curated = False
+        if s.lower() not in ALLOWED_SUBREDDITS:
+            ALLOWED_SUBREDDITS.add(s.lower())
+            PROMPT_DEFAULTS[s] = new_prompt
+            _persist_prompt_defaults()
+            added_to_curated = True
+        return {"status": "ok", "subreddit": s, "prompt": new_prompt, "addedToCurated": added_to_curated}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/prompts/{subreddit}")
+async def delete_subreddit_prompt(subreddit: str, admin_email: str = Depends(require_admin)):
+    try:
+        s = subreddit.strip()
+        if s.lower() not in ALLOWED_SUBREDDITS:
+            raise HTTPException(status_code=404, detail="Subreddit not found in curated list")
+        # Remove from in-memory sets
+        ALLOWED_SUBREDDITS.discard(s.lower())
+        # Remove from PROMPT_DEFAULTS (case-insensitive key match)
+        key_to_remove = next((k for k in PROMPT_DEFAULTS if k.lower() == s.lower()), None)
+        if key_to_remove:
+            del PROMPT_DEFAULTS[key_to_remove]
+        _persist_prompt_defaults()
+        # Remove from DB
+        try:
+            pool = get_pool()
+            async with pool.acquire() as conn:
+                await conn.execute("DELETE FROM prompts WHERE LOWER(subreddit) = LOWER($1)", s)
+        except Exception:
+            pass  # best-effort DB cleanup
+        return {"status": "ok", "subreddit": s, "removed": True}
     except HTTPException:
         raise
     except Exception as e:
