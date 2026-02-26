@@ -808,15 +808,27 @@ async function getRedditAccessToken(env: Env): Promise<string> {
       "User-Agent": "AgentDataWorker/1.0",
     },
     body: body.toString(),
+    redirect: "manual",
   });
+  if (resp.status >= 300 && resp.status < 400) {
+    throw new HttpError(502, "Reddit auth endpoint redirected — credentials may be invalid");
+  }
   if (!resp.ok) {
+    const ct = resp.headers.get("content-type") || "";
+    if (ct.includes("text/html")) {
+      throw new HttpError(502, `Reddit auth returned HTML (status ${resp.status}) — credentials may be invalid`);
+    }
     const message = await resp.text();
-    throw new HttpError(502, `Reddit auth failed: ${message}`);
+    throw new HttpError(502, `Reddit auth failed (${resp.status}): ${message.slice(0, 200)}`);
+  }
+  const ct = resp.headers.get("content-type") || "";
+  if (ct.includes("text/html")) {
+    throw new HttpError(502, "Reddit auth returned HTML instead of JSON");
   }
   const data = (await resp.json()) as JsonRecord;
   const token = `${data.access_token ?? ""}`.trim();
   const expiresInSec = Number(data.expires_in ?? 3600);
-  if (!token) throw new HttpError(502, "Reddit auth returned empty token");
+  if (!token) throw new HttpError(502, `Reddit auth returned empty token (response keys: ${Object.keys(data).join(", ")})`);
   redditTokenCache = {
     token,
     expiresAtMs: Date.now() + Math.max(30, expiresInSec) * 1000,
@@ -840,19 +852,36 @@ async function redditGet(
         Authorization: `Bearer ${token}`,
         "User-Agent": "AgentDataWorker/1.0",
       },
+      redirect: "manual",
     });
   };
 
   let token = await getRedditAccessToken(env);
   let resp = await perform(token);
-  if (resp.status === 401) {
+  // Reddit redirects to www.reddit.com on expired/invalid tokens — treat as 401
+  if (resp.status === 401 || (resp.status >= 300 && resp.status < 400)) {
     redditTokenCache = null;
     token = await getRedditAccessToken(env);
     resp = await perform(token);
   }
+  // Still a redirect or non-JSON response — bail
+  if (resp.status >= 300 && resp.status < 400) {
+    throw new HttpError(502, `Reddit API redirected (token likely invalid)`);
+  }
   if (!resp.ok) {
+    if (resp.status === 404) {
+      throw new HttpError(404, `Subreddit not found on Reddit (r/${path.split("/")[2] || "unknown"})`);
+    }
+    const ct = resp.headers.get("content-type") || "";
+    if (ct.includes("text/html")) {
+      throw new HttpError(502, `Reddit API returned HTML (status ${resp.status}) — possible auth or subreddit issue`);
+    }
     const message = await resp.text();
-    throw new HttpError(502, `Reddit API failed: ${message}`);
+    throw new HttpError(502, `Reddit API failed (${resp.status}): ${message.slice(0, 200)}`);
+  }
+  const ct = resp.headers.get("content-type") || "";
+  if (ct.includes("text/html")) {
+    throw new HttpError(502, `Reddit API returned HTML instead of JSON — possible redirect`);
   }
   return resp.json();
 }

@@ -1,3 +1,5 @@
+# DEPRECATED: Production backend is now cloudflare/backend/. Kept as reference.
+
 import asyncpraw as praw
 from os import getenv
 import traceback

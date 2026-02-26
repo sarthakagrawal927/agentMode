@@ -1,3 +1,5 @@
+# DEPRECATED: Production backend is now cloudflare/backend/. Kept as reference.
+
 import json
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, List, Optional

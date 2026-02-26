@@ -1,3 +1,9 @@
+# =============================================================================
+# DEPRECATED: This Python/FastAPI backend is no longer deployed in production.
+# The production backend is the Cloudflare Worker at cloudflare/backend/.
+# This code is kept as reference only.
+# =============================================================================
+
 from dotenv import load_dotenv
 
 load_dotenv()

@@ -1,3 +1,5 @@
+# DEPRECATED: Production backend is now cloudflare/backend/. Kept as reference.
+
 import json
 import os
 import ssl
