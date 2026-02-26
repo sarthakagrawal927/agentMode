@@ -42,7 +42,7 @@ const ALLOWED_SUBREDDITS = new Set(
 
 const CORS_BASE_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+  "Access-Control-Allow-Methods": "GET,POST,DELETE,OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type,Authorization",
 };
 
@@ -763,9 +763,6 @@ async function readPromptMap(env: Env): Promise<Record<string, string>> {
         const key = `${row.subreddit}`.trim();
         const value = `${row.prompt}`.trim();
         if (!key || !value) continue;
-        if (ALLOWED_SUBREDDITS.size > 0 && !ALLOWED_SUBREDDITS.has(key.toLowerCase())) {
-          continue;
-        }
         mapped[key] = value;
       }
       return mapped;
@@ -1272,12 +1269,6 @@ async function handleResearchSubreddit(
   const limitRaw = Number(data.limit ?? 20);
   const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.floor(limitRaw) : 20;
   if (!subredditName) throw new HttpError(400, "Subreddit name required");
-  if (
-    ALLOWED_SUBREDDITS.size > 0 &&
-    !ALLOWED_SUBREDDITS.has(subredditName.toLowerCase())
-  ) {
-    throw new HttpError(400, "Subreddit is not in the curated allowed list");
-  }
 
   const cacheKey = `${subredditName.toLowerCase()}::limit=${limit}::duration=${duration}`;
   const cached = await getCache(env, SUBREDDIT_CACHE_NAMESPACE, cacheKey);
@@ -1536,17 +1527,48 @@ async function handleSavePrompt(
 ): Promise<Response> {
   await requireAdmin(request, env);
   const normalized = normalizeSubredditName(subreddit);
-  if (
-    ALLOWED_SUBREDDITS.size > 0 &&
-    !ALLOWED_SUBREDDITS.has(normalized.toLowerCase())
-  ) {
-    throw new HttpError(400, "Subreddit is not in the curated allowed list");
-  }
   const body = await parseRequestJson(request);
   const prompt = `${body.prompt ?? ""}`.trim();
   if (!prompt) throw new HttpError(400, "Prompt must be non-empty");
   await writePromptMap(env, normalized, prompt);
-  return jsonResponse({ status: "ok", subreddit: normalized, prompt });
+  // Add to curated list if new
+  let addedToCurated = false;
+  if (!ALLOWED_SUBREDDITS.has(normalized.toLowerCase())) {
+    ALLOWED_SUBREDDITS.add(normalized.toLowerCase());
+    PROMPT_DEFAULTS[normalized] = prompt;
+    addedToCurated = true;
+  }
+  return jsonResponse({ status: "ok", subreddit: normalized, prompt, addedToCurated });
+}
+
+async function handleDeletePrompt(
+  request: Request,
+  env: Env,
+  subreddit: string,
+): Promise<Response> {
+  await requireAdmin(request, env);
+  const normalized = normalizeSubredditName(subreddit);
+  if (!ALLOWED_SUBREDDITS.has(normalized.toLowerCase())) {
+    throw new HttpError(404, "Subreddit not found in curated list");
+  }
+  // Remove from in-memory sets
+  ALLOWED_SUBREDDITS.delete(normalized.toLowerCase());
+  // Remove from PROMPT_DEFAULTS (case-insensitive key match)
+  for (const key of Object.keys(PROMPT_DEFAULTS)) {
+    if (key.toLowerCase() === normalized.toLowerCase()) {
+      delete PROMPT_DEFAULTS[key];
+      break;
+    }
+  }
+  // Remove from DB
+  try {
+    await withDb(env, async (client) => {
+      await client.query("DELETE FROM prompts WHERE LOWER(subreddit) = LOWER($1)", [normalized]);
+    });
+  } catch {
+    // best-effort DB cleanup
+  }
+  return jsonResponse({ status: "ok", subreddit: normalized, removed: true });
 }
 
 async function handleSummary(request: Request, env: Env): Promise<Response> {
@@ -1760,6 +1782,13 @@ export default {
       }
       if (promptMatch && method === "POST") {
         return await handleSavePrompt(
+          request,
+          env,
+          decodeURIComponent(promptMatch[1] || ""),
+        );
+      }
+      if (promptMatch && method === "DELETE") {
+        return await handleDeletePrompt(
           request,
           env,
           decodeURIComponent(promptMatch[1] || ""),
