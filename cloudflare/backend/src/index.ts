@@ -805,7 +805,7 @@ async function getRedditAccessToken(env: Env): Promise<string> {
     headers: {
       Authorization: `Basic ${basic}`,
       "Content-Type": "application/x-www-form-urlencoded",
-      "User-Agent": "AgentDataWorker/1.0",
+      "User-Agent": "web:agentdata:1.0 (by /u/agentdata_bot)",
     },
     body: body.toString(),
     redirect: "manual",
@@ -850,7 +850,7 @@ async function redditGet(
       method: "GET",
       headers: {
         Authorization: `Bearer ${token}`,
-        "User-Agent": "AgentDataWorker/1.0",
+        "User-Agent": "web:agentdata:1.0 (by /u/agentdata_bot)",
       },
       redirect: "manual",
     });
@@ -859,14 +859,27 @@ async function redditGet(
   let token = await getRedditAccessToken(env);
   let resp = await perform(token);
   // Reddit redirects to www.reddit.com on expired/invalid tokens — treat as 401
-  if (resp.status === 401 || (resp.status >= 300 && resp.status < 400)) {
+  if (resp.status === 401) {
     redditTokenCache = null;
     token = await getRedditAccessToken(env);
     resp = await perform(token);
   }
-  // Still a redirect or non-JSON response — bail
+  // Redirect — could be auth issue or quarantined subreddit; retry with fresh token once
   if (resp.status >= 300 && resp.status < 400) {
-    throw new HttpError(502, `Reddit API redirected (token likely invalid)`);
+    redditTokenCache = null;
+    token = await getRedditAccessToken(env);
+    // Retry following redirects this time (Reddit may redirect valid requests)
+    const url = new URL(`https://oauth.reddit.com${path}`);
+    for (const [key, value] of Object.entries(params)) {
+      url.searchParams.set(key, `${value}`);
+    }
+    resp = await fetch(url.toString(), {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "User-Agent": "web:agentdata:1.0 (by /u/agentdata_bot)",
+      },
+    });
   }
   if (!resp.ok) {
     if (resp.status === 404) {
