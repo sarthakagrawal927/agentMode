@@ -10,7 +10,7 @@
     "whoami": "wrangler whoami"
   },
   "dependencies": {
-    "pg": "^8.17.2"
+    "@libsql/client": "^0.15.0"
   },
   "devDependencies": {
     "wrangler": "^4.67.0"

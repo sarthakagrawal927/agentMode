@@ -8,7 +8,7 @@ AI-powered Reddit subreddit research and analysis platform.
 |----------|------------------------------|---------------------------|----------------------------------------------|
 | Frontend | Next.js (App Router)         | `web/`                    | Vercel (auto-deploy on push)                 |
 | Backend  | Cloudflare Workers (TypeScript) | `cloudflare/backend/`  | `npx wrangler deploy` from that directory    |
-| Database | CockroachDB (PostgreSQL)     | Hosted (Neon/Cockroach)   | Connection string in worker secrets          |
+| Database | Turso (libSQL/SQLite)        | Hosted (Turso)            | URL + auth token in worker secrets           |
 | Auth     | Google Identity Services     | Client-side GSI popup     | OAuth client ID in env vars                  |
 
 ### Deprecated
@@ -34,7 +34,8 @@ AI-powered Reddit subreddit research and analysis platform.
 ## Environment Variables
 
 ### Cloudflare Worker (secrets via `wrangler secret put`)
-- `DATABASE_URL` - CockroachDB connection string
+- `TURSO_URL` - Turso database URL (e.g. `libsql://your-db.turso.io`)
+- `TURSO_AUTH_TOKEN` - Turso auth token
 - `OPENAI_API_KEY` - For AI summary generation
 - `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` - Reddit API credentials
 

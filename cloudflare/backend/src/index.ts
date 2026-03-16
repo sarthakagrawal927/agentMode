@@ -1,10 +1,11 @@
-import { Client } from "pg";
+import { createClient, type Client } from "@libsql/client";
 import promptDefaultsRaw from "../prompts.json";
 
 type JsonRecord = Record<string, unknown>;
 
 type Env = {
-  DATABASE_URL: string;
+  TURSO_URL: string;
+  TURSO_AUTH_TOKEN: string;
   OPENAI_API_KEY: string;
   REDDIT_CLIENT_ID: string;
   REDDIT_CLIENT_SECRET: string;
@@ -46,31 +47,29 @@ const CORS_BASE_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Headers": "Content-Type,Authorization",
 };
 
-const DB_SCHEMA_SQL = `
-CREATE TABLE IF NOT EXISTS cache_entries (
-    namespace VARCHAR(255) NOT NULL,
-    key       TEXT         NOT NULL,
-    data      JSONB        NOT NULL,
-    expires_at TIMESTAMPTZ NOT NULL,
+const DB_SCHEMA_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS cache_entries (
+    namespace TEXT NOT NULL,
+    key       TEXT NOT NULL,
+    data      TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
     UNIQUE (namespace, key)
-);
-
-CREATE TABLE IF NOT EXISTS prompts (
-    subreddit VARCHAR(255) UNIQUE NOT NULL,
-    prompt    TEXT                NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS snapshots (
-    subreddit  VARCHAR(255) NOT NULL,
-    snap_date  DATE         NOT NULL,
-    period     VARCHAR(20)  NOT NULL,
-    data       JSONB        NOT NULL,
-    created_at TIMESTAMPTZ  DEFAULT NOW(),
+  )`,
+  `CREATE TABLE IF NOT EXISTS prompts (
+    subreddit TEXT UNIQUE NOT NULL,
+    prompt    TEXT        NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS snapshots (
+    subreddit  TEXT NOT NULL,
+    snap_date  TEXT NOT NULL,
+    period     TEXT NOT NULL,
+    data       TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now')),
     UNIQUE (subreddit, snap_date, period)
-);
-CREATE INDEX IF NOT EXISTS idx_snapshots_sub_date
-    ON snapshots (subreddit, snap_date DESC);
-`;
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_snapshots_sub_date
+    ON snapshots (subreddit, snap_date DESC)`,
+];
 
 let dbInitPromise: Promise<void> | null = null;
 let redditTokenCache: { token: string; expiresAtMs: number } | null = null;
@@ -594,44 +593,29 @@ async function requireAdmin(request: Request, env: Env): Promise<string> {
   return info.email;
 }
 
-async function withDb<T>(
-  env: Env,
-  operation: (client: Client) => Promise<T>,
-): Promise<T> {
-  const useSsl = !env.DATABASE_URL.includes("sslmode=disable");
-  const client = new Client({
-    connectionString: env.DATABASE_URL,
-    ...(useSsl ? { ssl: { rejectUnauthorized: false } } : {}),
+function getDb(env: Env): Client {
+  return createClient({
+    url: env.TURSO_URL,
+    authToken: env.TURSO_AUTH_TOKEN,
   });
-  await client.connect();
-  try {
-    return await operation(client);
-  } finally {
-    await client.end();
-  }
 }
 
 async function ensureDbInitialized(env: Env): Promise<void> {
   if (!dbInitPromise) {
     dbInitPromise = (async () => {
-      await withDb(env, async (client) => {
-        await client.query(DB_SCHEMA_SQL);
-        const countRes = await client.query<{ count: string }>(
-          "SELECT COUNT(*)::text AS count FROM prompts",
-        );
-        const count = Number.parseInt(countRes.rows[0]?.count || "0", 10);
-        if (count > 0) return;
-        for (const [subreddit, prompt] of Object.entries(PROMPT_DEFAULTS)) {
-          await client.query(
-            `
-            INSERT INTO prompts (subreddit, prompt)
-            VALUES ($1, $2)
-            ON CONFLICT (subreddit) DO NOTHING
-            `,
-            [subreddit, prompt],
-          );
-        }
-      });
+      const db = getDb(env);
+      for (const stmt of DB_SCHEMA_STATEMENTS) {
+        await db.execute(stmt);
+      }
+      const countRes = await db.execute("SELECT COUNT(*) AS count FROM prompts");
+      const count = Number(countRes.rows[0]?.count ?? 0);
+      if (count > 0) return;
+      for (const [subreddit, prompt] of Object.entries(PROMPT_DEFAULTS)) {
+        await db.execute({
+          sql: "INSERT INTO prompts (subreddit, prompt) VALUES (?, ?) ON CONFLICT (subreddit) DO NOTHING",
+          args: [subreddit, prompt],
+        });
+      }
     })().catch((err) => {
       dbInitPromise = null;
       throw err;
@@ -646,17 +630,13 @@ async function getCache(
   key: string,
 ): Promise<unknown | null> {
   await ensureDbInitialized(env);
-  return withDb(env, async (client) => {
-    const res = await client.query<{ data: unknown }>(
-      `
-      SELECT data FROM cache_entries
-      WHERE namespace = $1 AND key = $2 AND expires_at > NOW()
-      `,
-      [namespace, key],
-    );
-    if (res.rows.length === 0) return null;
-    return parseJsonColumn(res.rows[0]?.data ?? null);
+  const db = getDb(env);
+  const res = await db.execute({
+    sql: "SELECT data FROM cache_entries WHERE namespace = ? AND key = ? AND expires_at > datetime('now')",
+    args: [namespace, key],
   });
+  if (res.rows.length === 0) return null;
+  return parseJsonColumn(res.rows[0]?.data ?? null);
 }
 
 async function setCache(
@@ -668,16 +648,13 @@ async function setCache(
 ): Promise<void> {
   await ensureDbInitialized(env);
   const expiresAt = new Date(Date.now() + ttlSeconds * 1000).toISOString();
-  await withDb(env, async (client) => {
-    await client.query(
-      `
-      INSERT INTO cache_entries (namespace, key, data, expires_at)
-      VALUES ($1, $2, $3::jsonb, $4::timestamptz)
+  const db = getDb(env);
+  await db.execute({
+    sql: `INSERT INTO cache_entries (namespace, key, data, expires_at)
+      VALUES (?, ?, ?, ?)
       ON CONFLICT (namespace, key)
-      DO UPDATE SET data = EXCLUDED.data, expires_at = EXCLUDED.expires_at
-      `,
-      [namespace, key, JSON.stringify(data), expiresAt],
-    );
+      DO UPDATE SET data = EXCLUDED.data, expires_at = EXCLUDED.expires_at`,
+    args: [namespace, key, JSON.stringify(data), expiresAt],
   });
 }
 
@@ -689,16 +666,13 @@ async function saveSnapshot(
 ): Promise<void> {
   await ensureDbInitialized(env);
   const today = new Date().toISOString().slice(0, 10);
-  await withDb(env, async (client) => {
-    await client.query(
-      `
-      INSERT INTO snapshots (subreddit, snap_date, period, data)
-      VALUES ($1, $2::date, $3, $4::jsonb)
+  const db = getDb(env);
+  await db.execute({
+    sql: `INSERT INTO snapshots (subreddit, snap_date, period, data)
+      VALUES (?, ?, ?, ?)
       ON CONFLICT (subreddit, snap_date, period)
-      DO UPDATE SET data = EXCLUDED.data
-      `,
-      [subreddit.trim().toLowerCase(), today, period, JSON.stringify(data)],
-    );
+      DO UPDATE SET data = EXCLUDED.data`,
+    args: [subreddit.trim().toLowerCase(), today, period, JSON.stringify(data)],
   });
 }
 
@@ -709,66 +683,47 @@ async function getSnapshot(
   period?: string,
 ): Promise<unknown | null> {
   await ensureDbInitialized(env);
-  return withDb(env, async (client) => {
-    const normalizedSubreddit = subreddit.trim().toLowerCase();
-    const res = period
-      ? await client.query<{ data: unknown }>(
-          `
-          SELECT data FROM snapshots
-          WHERE subreddit = $1 AND snap_date = $2::date AND period = $3
-          `,
-          [normalizedSubreddit, dateStr, period],
-        )
-      : await client.query<{ data: unknown }>(
-          `
-          SELECT data FROM snapshots
-          WHERE subreddit = $1 AND snap_date = $2::date
-          ORDER BY created_at DESC
-          LIMIT 1
-          `,
-          [normalizedSubreddit, dateStr],
-        );
-    if (res.rows.length === 0) return null;
-    return parseJsonColumn(res.rows[0]?.data ?? null);
-  });
+  const db = getDb(env);
+  const normalizedSubreddit = subreddit.trim().toLowerCase();
+  const res = period
+    ? await db.execute({
+        sql: "SELECT data FROM snapshots WHERE subreddit = ? AND snap_date = ? AND period = ?",
+        args: [normalizedSubreddit, dateStr, period],
+      })
+    : await db.execute({
+        sql: "SELECT data FROM snapshots WHERE subreddit = ? AND snap_date = ? ORDER BY created_at DESC LIMIT 1",
+        args: [normalizedSubreddit, dateStr],
+      });
+  if (res.rows.length === 0) return null;
+  return parseJsonColumn(res.rows[0]?.data ?? null);
 }
 
 async function listSnapshotDates(env: Env, subreddit: string): Promise<string[]> {
   await ensureDbInitialized(env);
-  return withDb(env, async (client) => {
-    const res = await client.query<{ snap_date: unknown }>(
-      `
-      SELECT DISTINCT snap_date
-      FROM snapshots
-      WHERE subreddit = $1
-      ORDER BY snap_date DESC
-      `,
-      [subreddit.trim().toLowerCase()],
-    );
-    return res.rows
-      .map((row) => toIsoDate(row.snap_date))
-      .filter((item): item is string => Boolean(item));
+  const db = getDb(env);
+  const res = await db.execute({
+    sql: "SELECT DISTINCT snap_date FROM snapshots WHERE subreddit = ? ORDER BY snap_date DESC",
+    args: [subreddit.trim().toLowerCase()],
   });
+  return res.rows
+    .map((row) => toIsoDate(row.snap_date))
+    .filter((item): item is string => Boolean(item));
 }
 
 async function readPromptMap(env: Env): Promise<Record<string, string>> {
   await ensureDbInitialized(env);
   try {
-    const dbPrompts = await withDb(env, async (client) => {
-      const res = await client.query<{ subreddit: string; prompt: string }>(
-        "SELECT subreddit, prompt FROM prompts",
-      );
-      const mapped: Record<string, string> = {};
-      for (const row of res.rows) {
-        const key = `${row.subreddit}`.trim();
-        const value = `${row.prompt}`.trim();
-        if (!key || !value) continue;
-        mapped[key] = value;
-      }
-      return mapped;
-    });
+    const db = getDb(env);
+    const res = await db.execute("SELECT subreddit, prompt FROM prompts");
+    const mapped: Record<string, string> = {};
+    for (const row of res.rows) {
+      const key = `${row.subreddit}`.trim();
+      const value = `${row.prompt}`.trim();
+      if (!key || !value) continue;
+      mapped[key] = value;
+    }
     const merged: Record<string, string> = { ...PROMPT_DEFAULTS };
-    Object.assign(merged, dbPrompts);
+    Object.assign(merged, mapped);
     return merged;
   } catch {
     return { ...PROMPT_DEFAULTS };
@@ -781,16 +736,13 @@ async function writePromptMap(
   prompt: string,
 ): Promise<void> {
   await ensureDbInitialized(env);
-  await withDb(env, async (client) => {
-    await client.query(
-      `
-      INSERT INTO prompts (subreddit, prompt)
-      VALUES ($1, $2)
+  const db = getDb(env);
+  await db.execute({
+    sql: `INSERT INTO prompts (subreddit, prompt)
+      VALUES (?, ?)
       ON CONFLICT (subreddit)
-      DO UPDATE SET prompt = EXCLUDED.prompt
-      `,
-      [subreddit, prompt],
-    );
+      DO UPDATE SET prompt = EXCLUDED.prompt`,
+    args: [subreddit, prompt],
   });
 }
 
@@ -1486,18 +1438,12 @@ async function handleDates(env: Env, subreddit: string): Promise<Response> {
 async function handleFeed(url: URL, env: Env): Promise<Response> {
   const duration = normalizeDuration(url.searchParams.get("duration"));
   await ensureDbInitialized(env);
-  const rows = await withDb(env, async (client) => {
-    const res = await client.query<{ key: string; data: unknown }>(
-      `
-      SELECT key, data FROM cache_entries
-      WHERE namespace = $1
-        AND key LIKE $2
-        AND expires_at > NOW()
-      `,
-      [SUBREDDIT_CACHE_NAMESPACE, `%::duration=${duration}`],
-    );
-    return res.rows;
+  const db = getDb(env);
+  const feedRes = await db.execute({
+    sql: "SELECT key, data FROM cache_entries WHERE namespace = ? AND key LIKE ? AND expires_at > datetime('now')",
+    args: [SUBREDDIT_CACHE_NAMESPACE, `%::duration=${duration}`],
   });
+  const rows = feedRes.rows as Array<{ key: string; data: unknown }>;
 
   const bestBySubreddit = new Map<string, { limit: number; data: unknown }>();
   for (const row of rows) {
@@ -1604,8 +1550,10 @@ async function handleDeletePrompt(
   }
   // Remove from DB
   try {
-    await withDb(env, async (client) => {
-      await client.query("DELETE FROM prompts WHERE LOWER(subreddit) = LOWER($1)", [normalized]);
+    const db = getDb(env);
+    await db.execute({
+      sql: "DELETE FROM prompts WHERE LOWER(subreddit) = LOWER(?)",
+      args: [normalized],
     });
   } catch {
     // best-effort DB cleanup
@@ -1771,9 +1719,8 @@ export default {
       if (method === "GET" && path === "/health") {
         try {
           await ensureDbInitialized(env);
-          await withDb(env, async (client) => {
-            await client.query("SELECT 1");
-          });
+          const db = getDb(env);
+          await db.execute("SELECT 1");
           return jsonResponse({ status: "healthy", database: "connected" });
         } catch (error) {
           const message =
