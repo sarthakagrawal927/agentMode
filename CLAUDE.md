@@ -11,10 +11,6 @@ AI-powered Reddit subreddit research and analysis platform.
 | Database | Turso (libSQL/SQLite)        | Hosted (Turso)            | URL + auth token in worker secrets           |
 | Auth     | Google Identity Services     | Client-side GSI popup     | OAuth client ID in env vars                  |
 
-### Deprecated
-
-- `backend/` - Original Python/FastAPI backend (was deployed on Render). **No longer in production.** Kept as reference. The Cloudflare Workers backend (`cloudflare/backend/`) is the canonical backend.
-
 ## URLs
 
 - **Frontend**: https://agent-mode.vercel.app
