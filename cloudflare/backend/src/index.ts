@@ -191,10 +191,16 @@ function asRecord(value: unknown): JsonRecord | null {
   return value as JsonRecord;
 }
 
+const SUBREDDIT_NAME_RE = /^[A-Za-z0-9_]{1,21}$/;
+
 function normalizeSubredditName(input: unknown): string {
   const raw = `${input ?? ""}`.trim();
   if (!raw) return "";
-  return raw.replace(/^r\//i, "");
+  const stripped = raw.replace(/^r\//i, "");
+  if (!SUBREDDIT_NAME_RE.test(stripped)) {
+    throw new HttpError(400, "Invalid subreddit name. Must be 1-21 alphanumeric/underscore characters.");
+  }
+  return stripped;
 }
 
 function normalizeDuration(input: unknown): "1d" | "1week" | "1month" {
