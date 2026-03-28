@@ -74,6 +74,38 @@ const DB_SCHEMA_STATEMENTS = [
 let dbInitPromise: Promise<void> | null = null;
 let redditTokenCache: { token: string; expiresAtMs: number } | null = null;
 
+// --------------- In-memory rate limiter ---------------
+const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
+const RATE_LIMIT_RESEARCH = 10; // /api/research/subreddit
+const RATE_LIMIT_DEFAULT = 30; // all other endpoints
+
+type RateBucket = { count: number; resetAt: number };
+const rateLimitMap = new Map<string, RateBucket>();
+
+function checkRateLimit(ip: string, limit: number): boolean {
+  const now = Date.now();
+  const key = `${ip}:${limit}`;
+  const bucket = rateLimitMap.get(key);
+  if (!bucket || now >= bucket.resetAt) {
+    rateLimitMap.set(key, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
+    return true;
+  }
+  if (bucket.count >= limit) return false;
+  bucket.count++;
+  return true;
+}
+
+// Periodic cleanup to avoid unbounded memory growth
+let lastRateLimitCleanup = Date.now();
+function cleanupRateLimits(): void {
+  const now = Date.now();
+  if (now - lastRateLimitCleanup < RATE_LIMIT_WINDOW_MS) return;
+  lastRateLimitCleanup = now;
+  for (const [key, bucket] of rateLimitMap) {
+    if (now >= bucket.resetAt) rateLimitMap.delete(key);
+  }
+}
+
 class HttpError extends Error {
   status: number;
   detail: unknown;
@@ -1710,6 +1742,14 @@ export default {
     const url = new URL(request.url);
     const path = normalizePath(url.pathname);
     const method = request.method.toUpperCase();
+
+    // Rate limiting
+    cleanupRateLimits();
+    const clientIp = request.headers.get("CF-Connecting-IP") || request.headers.get("X-Forwarded-For") || "unknown";
+    const rateLimit = path === "/api/research/subreddit" ? RATE_LIMIT_RESEARCH : RATE_LIMIT_DEFAULT;
+    if (path.startsWith("/api/") && !checkRateLimit(clientIp, rateLimit)) {
+      return jsonResponse({ detail: "Too many requests. Please try again later." }, 429);
+    }
 
     try {
       if (method === "GET" && path === "/") {
