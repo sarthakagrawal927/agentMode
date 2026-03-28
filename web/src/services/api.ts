@@ -71,4 +71,18 @@ export const api = {
     if (!resp.ok) throw new Error("Failed to save subreddit prompt");
     return resp.json();
   },
+
+  async checkAdmin(authHeaders: Record<string, string>): Promise<boolean> {
+    try {
+      const resp = await fetch(`${API_BASE_URL}/admin/check`, {
+        headers: authHeaders,
+        cache: "no-store",
+      });
+      if (!resp.ok) return false;
+      const data = await resp.json() as { isAdmin?: boolean };
+      return !!data.isAdmin;
+    } catch {
+      return false;
+    }
+  },
 };

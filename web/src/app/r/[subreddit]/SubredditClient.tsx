@@ -10,17 +10,6 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { AuthUser, getStoredUser, getAuthHeaders } from '@/lib/auth';
 
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
-const FALLBACK_ADMIN_EMAIL = 'sarthakagrawal927@gmail.com';
-const ADMIN_EMAILS = new Set(
-  [
-    FALLBACK_ADMIN_EMAIL,
-    process.env.NEXT_PUBLIC_ADMIN_EMAIL || '',
-    process.env.NEXT_PUBLIC_ADMIN_EMAILS || '',
-  ]
-    .flatMap((entry) => entry.split(','))
-    .map((entry) => entry.trim().toLowerCase())
-    .filter(Boolean),
-);
 
 const PERIOD_MAP: Record<string, string> = {
   day: '1d',
@@ -329,8 +318,7 @@ export default function SubredditClient({
   const [promptDialogOpen, setPromptDialogOpen] = useState<boolean>(false);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [isHydrated, setIsHydrated] = useState(false);
-
-  const isAdmin = !!authUser?.email && ADMIN_EMAILS.has(authUser.email.toLowerCase());
+  const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
     setAuthUser(getStoredUser());
@@ -340,6 +328,19 @@ export default function SubredditClient({
     }, 1000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    const headers = getAuthHeaders();
+    if (!headers.Authorization) {
+      setIsAdmin(false);
+      return;
+    }
+    let cancelled = false;
+    api.checkAdmin(headers).then((result) => {
+      if (!cancelled) setIsAdmin(result);
+    });
+    return () => { cancelled = true; };
+  }, [authUser?.idToken]);
 
   useEffect(() => {
     if (isArchive) return;

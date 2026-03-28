@@ -1830,6 +1830,22 @@ export default {
         );
       }
 
+      if (method === "GET" && path === "/api/admin/check") {
+        const auth = request.headers.get("Authorization") || "";
+        if (!auth.startsWith("Bearer ")) {
+          return jsonResponse({ isAdmin: false });
+        }
+        const token = auth.slice("Bearer ".length).trim();
+        if (!token) return jsonResponse({ isAdmin: false });
+        try {
+          const info = await verifyGoogleToken(token);
+          const allowed = adminEmailSet(env);
+          return jsonResponse({ isAdmin: allowed.has(info.email) });
+        } catch {
+          return jsonResponse({ isAdmin: false });
+        }
+      }
+
       return jsonResponse({ detail: "Not found" }, 404);
     } catch (error) {
       return toErrorResponse(error);
