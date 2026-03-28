@@ -4,13 +4,13 @@ Audited: 2026-03-29
 
 ## HIGH Severity
 
-- [ ] **No rate limiting on any endpoint** — `cloudflare/backend/src/index.ts` (all routes, lines 1735-1785). Public endpoints like `/api/research/subreddit` trigger Reddit + OpenAI API calls with no throttling. Risk: resource exhaustion, runaway API costs, DDoS.
+- [x] **No rate limiting on any endpoint** — `cloudflare/backend/src/index.ts` (all routes, lines 1735-1785). Public endpoints like `/api/research/subreddit` trigger Reddit + OpenAI API calls with no throttling. Risk: resource exhaustion, runaway API costs, DDoS.
   - Fix: Add in-memory rate limiting. `/api/research/subreddit` at 10 req/min per IP, all others at 30 req/min. Return 429.
 
-- [ ] **Subreddit name not validated** — `cloudflare/backend/src/index.ts:162-166`. `normalizeSubredditName()` only strips `r/` prefix, accepts any characters/length. Arbitrary strings flow into Reddit API calls, cache keys, and DB queries.
+- [x] **Subreddit name not validated** — `cloudflare/backend/src/index.ts:162-166`. `normalizeSubredditName()` only strips `r/` prefix, accepts any characters/length. Arbitrary strings flow into Reddit API calls, cache keys, and DB queries.
   - Fix: Validate alphanumeric + underscores only, max 21 chars. Return 400 on invalid.
 
-- [ ] **Hardcoded admin email in client bundle** — `web/src/app/r/[subreddit]/SubredditClient.tsx:13`. `FALLBACK_ADMIN_EMAIL = 'sarthakagrawal927@gmail.com'` is shipped in the JS bundle. Leaks admin identity; bypasses env-var config.
+- [x] **Hardcoded admin email in client bundle** — `web/src/app/r/[subreddit]/SubredditClient.tsx:13`. `FALLBACK_ADMIN_EMAIL = 'sarthakagrawal927@gmail.com'` is shipped in the JS bundle. Leaks admin identity; bypasses env-var config.
   - Fix: Remove hardcoded fallback. Add `/api/admin/check` backend endpoint. Frontend calls API to determine admin status.
 
 ## MEDIUM Severity
@@ -23,10 +23,10 @@ Audited: 2026-03-29
 
 ## LOW Severity
 
-- [ ] **Dead code directories** — `backend/`, `models/`, `SadTalker/`, `sampleIO/` are unused. `backend/` is the deprecated Python backend (per CLAUDE.md). Others are unrelated ML experiments. Increases repo size and attack surface.
+- [x] **Dead code directories** — `backend/`, `models/`, `SadTalker/`, `sampleIO/` are unused. `backend/` is the deprecated Python backend (per CLAUDE.md). Others are unrelated ML experiments. Increases repo size and attack surface.
   - Fix: Delete all four directories.
 
-- [ ] **Deprecated backend/.env has credentials** — `backend/.env` contains old PostgreSQL, LinkedIn, Reddit credentials. Not deployed but sitting in working tree (gitignored, not in history).
+- [x] **Deprecated backend/.env has credentials** — `backend/.env` contains old PostgreSQL, LinkedIn, Reddit credentials. Not deployed but sitting in working tree (gitignored, not in history).
   - Note: Credentials should be rotated regardless. Deleting `backend/` resolves this.
 
 ## Auth Model (OK)
