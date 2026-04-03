@@ -1,4 +1,5 @@
 const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || '';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000/api';
 const STORAGE_KEY = 'agentdata_auth';
 
 export interface AuthUser {
@@ -6,6 +7,8 @@ export interface AuthUser {
   name: string;
   picture: string;
   idToken: string;
+  id?: string;
+  plan?: string;
 }
 
 export function getStoredUser(): AuthUser | null {
@@ -33,6 +36,23 @@ export function getAuthHeaders(): Record<string, string> {
   return { Authorization: `Bearer ${user.idToken}` };
 }
 
+async function syncSession(idToken: string): Promise<{ id: string; plan: string } | null> {
+  try {
+    const resp = await fetch(`${API_BASE_URL}/auth/session`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${idToken}`,
+        'Content-Type': 'application/json',
+      },
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    return { id: data.id, plan: data.plan || 'free' };
+  } catch {
+    return null;
+  }
+}
+
 export function initGoogleAuth(onSignIn: (user: AuthUser) => void) {
   if (typeof window === 'undefined' || !GOOGLE_CLIENT_ID) return;
 
@@ -41,9 +61,8 @@ export function initGoogleAuth(onSignIn: (user: AuthUser) => void) {
 
   g.accounts.id.initialize({
     client_id: GOOGLE_CLIENT_ID,
-    callback: (response: any) => {
+    callback: async (response: any) => {
       const idToken: string = response.credential;
-      // Decode JWT payload (base64url)
       try {
         const payload = JSON.parse(atob(idToken.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
         const user: AuthUser = {
@@ -52,6 +71,12 @@ export function initGoogleAuth(onSignIn: (user: AuthUser) => void) {
           picture: payload.picture || '',
           idToken,
         };
+        // Sync with backend to upsert user and get plan
+        const session = await syncSession(idToken);
+        if (session) {
+          user.id = session.id;
+          user.plan = session.plan;
+        }
         storeUser(user);
         onSignIn(user);
       } catch {

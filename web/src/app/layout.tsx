@@ -34,6 +34,9 @@ export default function RootLayout({
               <Link href="/discover" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
                 Discover
               </Link>
+              <Link href="/dashboard" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
+                Dashboard
+              </Link>
               <div className="h-4 w-px bg-border" />
               <AuthButton />
               <ThemeToggle />

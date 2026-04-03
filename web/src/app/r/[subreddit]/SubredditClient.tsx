@@ -8,6 +8,7 @@ import Link from 'next/link';
 import { ChevronDown, ExternalLink, Settings, Sparkles, Square } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { AuthUser, getStoredUser, getAuthHeaders } from '@/lib/auth';
+import TrackButton from '@/components/TrackButton';
 
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -491,16 +492,21 @@ export default function SubredditClient({
               <p className="text-xs uppercase tracking-[0.18em] text-[#6f86ad]">r/{subreddit}</p>
               <h1 className="mt-2 text-4xl font-semibold tracking-tight text-[#f4f8ff]">Summary</h1>
             </div>
-            {isAdmin && !isArchive && (
-              <Button
-                onClick={() => setPromptDialogOpen(true)}
-                variant="outline"
-                className="h-10 rounded-md border-[#22375a] bg-[#0b1526] px-3 text-[#d7e6ff] hover:bg-[#10203a] hover:text-[#eff5ff]"
-              >
-                <Settings size={14} className="mr-1.5" />
-                Prompt
-              </Button>
-            )}
+            <div className="flex items-center gap-2">
+              {isHydrated && authUser && !isArchive && (
+                <TrackButton subreddit={subreddit} />
+              )}
+              {isAdmin && !isArchive && (
+                <Button
+                  onClick={() => setPromptDialogOpen(true)}
+                  variant="outline"
+                  className="h-10 rounded-md border-[#22375a] bg-[#0b1526] px-3 text-[#d7e6ff] hover:bg-[#10203a] hover:text-[#eff5ff]"
+                >
+                  <Settings size={14} className="mr-1.5" />
+                  Prompt
+                </Button>
+              )}
+            </div>
           </div>
 
           <div className="mt-5 flex flex-wrap items-center gap-2">
