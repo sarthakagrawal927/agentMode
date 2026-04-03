@@ -11,6 +11,7 @@ type Env = {
   REDDIT_CLIENT_SECRET: string;
   ADMIN_EMAIL: string;
   ADMIN_EMAILS?: string;
+  RESEND_API_KEY?: string;
 };
 
 type RedditComment = {
@@ -69,7 +70,44 @@ const DB_SCHEMA_STATEMENTS = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_snapshots_sub_date
     ON snapshots (subreddit, snap_date DESC)`,
+  `CREATE TABLE IF NOT EXISTS users (
+    id         TEXT PRIMARY KEY,
+    email      TEXT UNIQUE NOT NULL,
+    name       TEXT,
+    picture    TEXT,
+    plan       TEXT DEFAULT 'free',
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+  )`,
+  `CREATE TABLE IF NOT EXISTS tracked_subreddits (
+    id         TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL,
+    subreddit  TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now')),
+    UNIQUE (user_id, subreddit)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_tracked_user
+    ON tracked_subreddits (user_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_tracked_subreddit
+    ON tracked_subreddits (subreddit)`,
+  `CREATE TABLE IF NOT EXISTS digest_preferences (
+    id                   TEXT PRIMARY KEY,
+    user_id              TEXT NOT NULL,
+    tracked_subreddit_id TEXT NOT NULL,
+    channel              TEXT NOT NULL DEFAULT 'email',
+    frequency            TEXT NOT NULL DEFAULT 'daily',
+    enabled              INTEGER DEFAULT 1,
+    last_sent_at         TEXT,
+    created_at           TEXT DEFAULT (datetime('now')),
+    UNIQUE (user_id, tracked_subreddit_id, channel)
+  )`,
 ];
+
+const PLAN_LIMITS: Record<string, number> = {
+  free: 1,
+  pro: 999,
+  team: 999,
+};
 
 let dbInitPromise: Promise<void> | null = null;
 let redditTokenCache: { token: string; expiresAtMs: number } | null = null;
@@ -604,7 +642,9 @@ function adminEmailSet(env: Env): Set<string> {
   );
 }
 
-async function verifyGoogleToken(idToken: string): Promise<{ email: string }> {
+async function verifyGoogleToken(
+  idToken: string,
+): Promise<{ email: string; name?: string; picture?: string }> {
   const tokenInfoUrl = new URL("https://oauth2.googleapis.com/tokeninfo");
   tokenInfoUrl.searchParams.set("id_token", idToken);
   const resp = await fetch(tokenInfoUrl.toString(), { method: "GET" });
@@ -612,7 +652,11 @@ async function verifyGoogleToken(idToken: string): Promise<{ email: string }> {
   const data = (await resp.json()) as JsonRecord;
   const email = `${data.email ?? ""}`.trim().toLowerCase();
   if (!email) throw new HttpError(401, "Google token missing email");
-  return { email };
+  return {
+    email,
+    name: `${data.name ?? ""}`.trim() || undefined,
+    picture: `${data.picture ?? ""}`.trim() || undefined,
+  };
 }
 
 async function requireAdmin(request: Request, env: Env): Promise<string> {
@@ -629,6 +673,239 @@ async function requireAdmin(request: Request, env: Env): Promise<string> {
   const info = await verifyGoogleToken(token);
   if (!allowed.has(info.email)) throw new HttpError(403, "Admin access required");
   return info.email;
+}
+
+type UserRow = { id: string; email: string; name: string | null; picture: string | null; plan: string };
+
+async function requireUser(
+  request: Request,
+  env: Env,
+): Promise<UserRow> {
+  const auth = request.headers.get("Authorization") || "";
+  if (!auth.startsWith("Bearer ")) throw new HttpError(401, "Missing Authorization header");
+  const token = auth.slice("Bearer ".length).trim();
+  if (!token) throw new HttpError(401, "Missing Authorization token");
+  const info = await verifyGoogleToken(token);
+  await ensureDbInitialized(env);
+  const db = getDb(env);
+  const existing = await db.execute({
+    sql: "SELECT id, email, name, picture, plan FROM users WHERE email = ?",
+    args: [info.email],
+  });
+  if (existing.rows.length > 0) {
+    const row = existing.rows[0];
+    return {
+      id: `${row.id}`,
+      email: `${row.email}`,
+      name: row.name ? `${row.name}` : null,
+      picture: row.picture ? `${row.picture}` : null,
+      plan: `${row.plan || "free"}`,
+    };
+  }
+  const userId = crypto.randomUUID();
+  await db.execute({
+    sql: "INSERT INTO users (id, email, name, picture, plan) VALUES (?, ?, ?, ?, 'free')",
+    args: [userId, info.email, info.name || null, info.picture || null],
+  });
+  return { id: userId, email: info.email, name: info.name || null, picture: info.picture || null, plan: "free" };
+}
+
+async function handleAuthSession(request: Request, env: Env): Promise<Response> {
+  const user = await requireUser(request, env);
+  return jsonResponse(user);
+}
+
+async function handleTrackSubreddit(request: Request, env: Env): Promise<Response> {
+  const user = await requireUser(request, env);
+  const body = await parseRequestJson(request);
+  const subreddit = normalizeSubredditName(body.subreddit);
+  if (!subreddit) throw new HttpError(400, "Valid subreddit name required");
+
+  const db = getDb(env);
+  const countRes = await db.execute({
+    sql: "SELECT COUNT(*) AS count FROM tracked_subreddits WHERE user_id = ?",
+    args: [user.id],
+  });
+  const count = Number(countRes.rows[0]?.count ?? 0);
+  const limit = PLAN_LIMITS[user.plan] ?? 1;
+  if (count >= limit) {
+    throw new HttpError(403, `Free plan allows ${limit} tracked subreddit${limit === 1 ? "" : "s"}. Upgrade for more.`);
+  }
+
+  const id = crypto.randomUUID();
+  await db.execute({
+    sql: `INSERT INTO tracked_subreddits (id, user_id, subreddit) VALUES (?, ?, ?)
+      ON CONFLICT (user_id, subreddit) DO NOTHING`,
+    args: [id, user.id, subreddit],
+  });
+  return jsonResponse({ id, subreddit, created: true }, 201);
+}
+
+async function handleListTrackedSubreddits(request: Request, env: Env): Promise<Response> {
+  const user = await requireUser(request, env);
+  await ensureDbInitialized(env);
+  const db = getDb(env);
+  const res = await db.execute({
+    sql: `SELECT ts.id, ts.subreddit, ts.created_at,
+      (SELECT s.data FROM snapshots s WHERE s.subreddit = LOWER(ts.subreddit) ORDER BY s.created_at DESC LIMIT 1) AS latest_snapshot
+      FROM tracked_subreddits ts WHERE ts.user_id = ? ORDER BY ts.created_at DESC`,
+    args: [user.id],
+  });
+  const items = res.rows.map((row) => ({
+    id: `${row.id}`,
+    subreddit: `${row.subreddit}`,
+    created_at: `${row.created_at}`,
+    latest_snapshot: parseJsonColumn(row.latest_snapshot ?? null),
+  }));
+  return jsonResponse({ items, plan: user.plan, limit: PLAN_LIMITS[user.plan] ?? 1 });
+}
+
+async function handleUntrackSubreddit(request: Request, env: Env, trackId: string): Promise<Response> {
+  const user = await requireUser(request, env);
+  const db = getDb(env);
+  const res = await db.execute({
+    sql: "DELETE FROM tracked_subreddits WHERE id = ? AND user_id = ? RETURNING id",
+    args: [trackId, user.id],
+  });
+  if (res.rows.length === 0) throw new HttpError(404, "Tracked subreddit not found");
+  // Also clean up digest preferences
+  await db.execute({
+    sql: "DELETE FROM digest_preferences WHERE tracked_subreddit_id = ? AND user_id = ?",
+    args: [trackId, user.id],
+  }).catch(() => undefined);
+  return jsonResponse({ removed: true });
+}
+
+async function handleSaveDigestPreference(request: Request, env: Env): Promise<Response> {
+  const user = await requireUser(request, env);
+  const body = await parseRequestJson(request);
+  const trackedSubredditId = `${body.tracked_subreddit_id ?? ""}`.trim();
+  if (!trackedSubredditId) throw new HttpError(400, "tracked_subreddit_id required");
+
+  // Verify ownership
+  const db = getDb(env);
+  const ownership = await db.execute({
+    sql: "SELECT id FROM tracked_subreddits WHERE id = ? AND user_id = ?",
+    args: [trackedSubredditId, user.id],
+  });
+  if (ownership.rows.length === 0) throw new HttpError(404, "Tracked subreddit not found");
+
+  const channel = `${body.channel ?? "email"}`.trim();
+  if (channel !== "email" && channel !== "slack") throw new HttpError(400, "channel must be email or slack");
+  const frequency = `${body.frequency ?? "daily"}`.trim();
+  if (frequency !== "daily" && frequency !== "weekly") throw new HttpError(400, "frequency must be daily or weekly");
+  const enabled = body.enabled !== false && body.enabled !== 0 ? 1 : 0;
+  const slackWebhook = channel === "slack" ? `${body.slack_webhook_url ?? ""}`.trim() : null;
+  if (channel === "slack" && !slackWebhook) throw new HttpError(400, "slack_webhook_url required for slack channel");
+
+  const id = crypto.randomUUID();
+  await db.execute({
+    sql: `INSERT INTO digest_preferences (id, user_id, tracked_subreddit_id, channel, frequency, enabled)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT (user_id, tracked_subreddit_id, channel)
+      DO UPDATE SET frequency = EXCLUDED.frequency, enabled = EXCLUDED.enabled`,
+    args: [id, user.id, trackedSubredditId, channel, frequency, enabled],
+  });
+  return jsonResponse({ id, channel, frequency, enabled: !!enabled }, 201);
+}
+
+async function handleListDigestPreferences(request: Request, env: Env): Promise<Response> {
+  const user = await requireUser(request, env);
+  await ensureDbInitialized(env);
+  const db = getDb(env);
+  const res = await db.execute({
+    sql: `SELECT dp.id, dp.tracked_subreddit_id, dp.channel, dp.frequency, dp.enabled, dp.last_sent_at,
+      ts.subreddit
+      FROM digest_preferences dp
+      JOIN tracked_subreddits ts ON ts.id = dp.tracked_subreddit_id
+      WHERE dp.user_id = ?
+      ORDER BY dp.created_at DESC`,
+    args: [user.id],
+  });
+  const items = res.rows.map((row) => ({
+    id: `${row.id}`,
+    tracked_subreddit_id: `${row.tracked_subreddit_id}`,
+    subreddit: `${row.subreddit}`,
+    channel: `${row.channel}`,
+    frequency: `${row.frequency}`,
+    enabled: !!row.enabled,
+    last_sent_at: row.last_sent_at ? `${row.last_sent_at}` : null,
+  }));
+  return jsonResponse({ items });
+}
+
+async function handleDeleteDigestPreference(request: Request, env: Env, prefId: string): Promise<Response> {
+  const user = await requireUser(request, env);
+  const db = getDb(env);
+  const res = await db.execute({
+    sql: "DELETE FROM digest_preferences WHERE id = ? AND user_id = ? RETURNING id",
+    args: [prefId, user.id],
+  });
+  if (res.rows.length === 0) throw new HttpError(404, "Digest preference not found");
+  return jsonResponse({ removed: true });
+}
+
+async function sendResendEmail(
+  apiKey: string,
+  to: string,
+  subject: string,
+  html: string,
+): Promise<boolean> {
+  try {
+    const resp = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: "SubWatch Digest <onboarding@resend.dev>",
+        to: [to],
+        subject,
+        html,
+      }),
+    });
+    return resp.ok;
+  } catch {
+    return false;
+  }
+}
+
+function buildDigestHtml(subreddit: string, snapshot: JsonRecord): string {
+  const structured = asRecord(snapshot.ai_summary_structured);
+  const keyTrend = asRecord(structured?.key_trend);
+  const notable = Array.isArray(structured?.notable_discussions)
+    ? structured.notable_discussions
+    : [];
+  const keyAction = asRecord(structured?.key_action);
+
+  let html = `<div style="font-family:sans-serif;max-width:600px;margin:0 auto;">`;
+  html += `<h2 style="color:#1a1a2e;">r/${subreddit} — AI Summary</h2>`;
+
+  if (keyTrend) {
+    html += `<h3 style="color:#16213e;">${keyTrend.title || "Key Trend"}</h3>`;
+    html += `<p>${keyTrend.desc || ""}</p>`;
+  }
+
+  if (notable.length > 0) {
+    html += `<h3 style="color:#16213e;">Notable Discussions</h3><ul>`;
+    for (const item of notable) {
+      const rec = asRecord(item);
+      if (!rec) continue;
+      html += `<li><strong>${rec.title || ""}</strong>: ${rec.desc || ""}</li>`;
+    }
+    html += `</ul>`;
+  }
+
+  if (keyAction) {
+    html += `<h3 style="color:#16213e;">Key Action</h3>`;
+    html += `<p>${keyAction.desc || ""}</p>`;
+  }
+
+  html += `<hr style="border:none;border-top:1px solid #eee;margin:24px 0;" />`;
+  html += `<p style="color:#888;font-size:12px;">Sent by SubWatch. <a href="https://agent-mode.vercel.app/dashboard">Manage preferences</a></p>`;
+  html += `</div>`;
+  return html;
 }
 
 function getDb(env: Env): Client {
@@ -1830,6 +2107,38 @@ export default {
         );
       }
 
+      // --- User auth + tracked subreddits ---
+      if (method === "POST" && path === "/api/auth/session") {
+        return await handleAuthSession(request, env);
+      }
+
+      if (method === "POST" && path === "/api/subreddits/track") {
+        return await handleTrackSubreddit(request, env);
+      }
+
+      if (method === "GET" && path === "/api/subreddits/mine") {
+        return await handleListTrackedSubreddits(request, env);
+      }
+
+      const untrackMatch = path.match(/^\/api\/subreddits\/track\/([^/]+)$/);
+      if (method === "DELETE" && untrackMatch) {
+        return await handleUntrackSubreddit(request, env, decodeURIComponent(untrackMatch[1] || ""));
+      }
+
+      // --- Digest preferences ---
+      if (method === "POST" && path === "/api/digest-preferences") {
+        return await handleSaveDigestPreference(request, env);
+      }
+
+      if (method === "GET" && path === "/api/digest-preferences") {
+        return await handleListDigestPreferences(request, env);
+      }
+
+      const digestPrefMatch = path.match(/^\/api\/digest-preferences\/([^/]+)$/);
+      if (method === "DELETE" && digestPrefMatch) {
+        return await handleDeleteDigestPreference(request, env, decodeURIComponent(digestPrefMatch[1] || ""));
+      }
+
       if (method === "GET" && path === "/api/admin/check") {
         const auth = request.headers.get("Authorization") || "";
         if (!auth.startsWith("Bearer ")) {
@@ -1849,6 +2158,102 @@ export default {
       return jsonResponse({ detail: "Not found" }, 404);
     } catch (error) {
       return toErrorResponse(error);
+    }
+  },
+
+  async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
+    try {
+      await ensureDbInitialized(env);
+      const db = getDb(env);
+
+      // 1. Get all distinct tracked subreddits
+      const trackedRes = await db.execute(
+        "SELECT DISTINCT subreddit FROM tracked_subreddits",
+      );
+      const subreddits = trackedRes.rows.map((r) => `${r.subreddit}`).filter(Boolean);
+
+      // 2. For each: fetch Reddit data, generate AI summary, save snapshot
+      const duration = "1week" as const;
+      for (const sub of subreddits) {
+        try {
+          const cacheKey = `${sub.toLowerCase()}::limit=20::duration=${duration}`;
+          const topPosts = await getTopPostsForSubreddit(env, sub, 20, duration);
+          const result: JsonRecord = {
+            subreddit: sub,
+            period: duration,
+            cachedAt: new Date().toISOString(),
+            top_posts: topPosts,
+          };
+          const enriched = await maybeAttachAiSummary(env, sub, duration, result);
+          await setCache(env, SUBREDDIT_CACHE_NAMESPACE, cacheKey, enriched, ONE_DAY_TTL_SECONDS);
+          await saveSnapshot(env, sub, duration, enriched).catch(() => undefined);
+        } catch {
+          // Continue to next subreddit on failure
+        }
+      }
+
+      // 3. Send digests
+      if (!env.RESEND_API_KEY) return;
+
+      const now = new Date();
+      const isNewDay = now.getUTCHours() < 6; // First run of the day (0:00 UTC)
+      const isSaturday = now.getUTCDay() === 6;
+
+      const digestRes = await db.execute(
+        `SELECT dp.id, dp.user_id, dp.tracked_subreddit_id, dp.channel, dp.frequency, dp.last_sent_at,
+          ts.subreddit, u.email
+          FROM digest_preferences dp
+          JOIN tracked_subreddits ts ON ts.id = dp.tracked_subreddit_id
+          JOIN users u ON u.id = dp.user_id
+          WHERE dp.enabled = 1 AND dp.channel = 'email'`,
+      );
+
+      for (const row of digestRes.rows) {
+        const frequency = `${row.frequency}`;
+        const lastSent = `${row.last_sent_at ?? ""}`.trim();
+
+        // Skip if not the right time
+        if (frequency === "weekly" && !isSaturday) continue;
+        if (frequency === "daily" && !isNewDay) continue;
+
+        // Skip if already sent today
+        if (lastSent) {
+          const lastSentDate = lastSent.slice(0, 10);
+          const todayDate = now.toISOString().slice(0, 10);
+          if (lastSentDate === todayDate) continue;
+        }
+
+        const sub = `${row.subreddit}`;
+        const email = `${row.email}`;
+        const prefId = `${row.id}`;
+
+        // Get latest snapshot
+        const snapRes = await db.execute({
+          sql: "SELECT data FROM snapshots WHERE subreddit = ? ORDER BY created_at DESC LIMIT 1",
+          args: [sub.toLowerCase()],
+        });
+        if (snapRes.rows.length === 0) continue;
+
+        const snapshot = asRecord(parseJsonColumn(snapRes.rows[0]?.data ?? null));
+        if (!snapshot) continue;
+
+        const html = buildDigestHtml(sub, snapshot);
+        const sent = await sendResendEmail(
+          env.RESEND_API_KEY,
+          email,
+          `Your SubWatch Digest — r/${sub}`,
+          html,
+        );
+
+        if (sent) {
+          await db.execute({
+            sql: "UPDATE digest_preferences SET last_sent_at = ? WHERE id = ?",
+            args: [now.toISOString(), prefId],
+          }).catch(() => undefined);
+        }
+      }
+    } catch {
+      // Scheduled handler should not throw
     }
   },
 };

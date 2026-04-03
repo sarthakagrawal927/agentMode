@@ -13,5 +13,8 @@
   "vars": {
     "ADMIN_EMAIL": "sarthakagrawal927@gmail.com",
     "ADMIN_EMAILS": "sarthakagrawal927@gmail.com"
+  },
+  "triggers": {
+    "crons": ["0 */6 * * *"]
   }
 }
