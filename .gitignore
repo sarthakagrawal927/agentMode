@@ -58,3 +58,4 @@ models/modal-examples/
 # One-off local test files
 models/parler/test.py
 .vercel/
+.saasmaker.json
