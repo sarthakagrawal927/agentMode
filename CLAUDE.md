@@ -13,7 +13,8 @@ AI-powered Reddit subreddit research and analysis platform.
 
 ## URLs
 
-- **Frontend**: https://agent-mode.vercel.app
+- **Frontend (Vercel)**: https://agent-mode.vercel.app
+- **Frontend (CF Workers)**: https://agentmode-web.sarthakagrawal927.workers.dev
 - **Backend**: https://agentdata-backend-prod.sarthakagrawal927.workers.dev
 
 ## Key Files
@@ -38,10 +39,14 @@ AI-powered Reddit subreddit research and analysis platform.
 ### Cloudflare Worker (vars in wrangler.jsonc)
 - `ADMIN_EMAIL` / `ADMIN_EMAILS` - Comma-separated admin emails for auth
 
-### Vercel Frontend
+### Frontend (Vercel + CF Workers)
 - `NEXT_PUBLIC_API_BASE_URL` - Backend URL (`https://agentdata-backend-prod.sarthakagrawal927.workers.dev/api`)
 - `NEXT_PUBLIC_GOOGLE_CLIENT_ID` - Google OAuth client ID
 - `NEXT_PUBLIC_ADMIN_EMAIL` / `NEXT_PUBLIC_ADMIN_EMAILS` - For client-side admin UI gating
+
+> **IMPORTANT for CF Workers deploy**: `NEXT_PUBLIC_*` vars are baked in at build time by Next.js.
+> They must be present in `web/.env.local` before running `pnpm cf:build`, NOT just in `wrangler.toml`.
+> `wrangler.toml` vars only work for server-side runtime — they do NOT inject into client bundles.
 
 ## Commands
 
