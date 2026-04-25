@@ -11,6 +11,9 @@ importers:
       '@libsql/client':
         specifier: ^0.17.3
         version: 0.17.3
+      '@saas-maker/ops':
+        specifier: ^0.1.1
+        version: 0.1.1
     devDependencies:
       wrangler:
         specifier: ^4.85.0
@@ -456,6 +459,9 @@ packages:
   '@poppinss/exception@1.2.3':
     resolution: {integrity: sha512-dCED+QRChTVatE9ibtoaxc+WkdzOSjYTKi/+uacHWIsfodVfpsueo3+DKpgU5Px8qXjgmXkSvhXvSCz3fnP9lw==}
 
+  '@saas-maker/ops@0.1.1':
+    resolution: {integrity: sha512-MdCt9Q6B5F6c/sGtjfbBD949vr64693j+oyM+umQAIo8ovAtVCqduvMo9N/BDkD4o1FYec8e05fUnmnXmQa0Vg==}
+
   '@sindresorhus/is@7.2.0':
     resolution: {integrity: sha512-P1Cz1dWaFfR4IR+U13mqqiGsLFf1KbayybWwdd2vfctdV6hDpUkgCY0nKOLLTMSoRd/jJNjtbqzf13K8DCCXQw==}
     engines: {node: '>=18'}
@@ -882,6 +888,8 @@ snapshots:
       supports-color: 10.2.2
 
   '@poppinss/exception@1.2.3': {}
+
+  '@saas-maker/ops@0.1.1': {}
 
   '@sindresorhus/is@7.2.0': {}
 

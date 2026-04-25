@@ -1,5 +1,6 @@
 import { createClient, type Client } from "@libsql/client";
 import promptDefaultsRaw from "../prompts.json";
+import { configurePostHog, trace, flushPostHog } from "@saas-maker/ops";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -12,6 +13,7 @@ type Env = {
   ADMIN_EMAIL: string;
   ADMIN_EMAILS?: string;
   RESEND_API_KEY?: string;
+  POSTHOG_API_KEY?: string;
 };
 
 type RedditComment = {
@@ -2018,9 +2020,16 @@ function toErrorResponse(error: unknown): Response {
   return jsonResponse({ detail: message }, 500);
 }
 
+let phConfigured = false;
+
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     if (request.method === "OPTIONS") return noContent();
+
+    if (!phConfigured && env.POSTHOG_API_KEY) {
+      configurePostHog(env.POSTHOG_API_KEY, "https://us.i.posthog.com");
+      phConfigured = true;
+    }
 
     const url = new URL(request.url);
     const path = normalizePath(url.pathname);
@@ -2056,7 +2065,13 @@ export default {
       }
 
       if (method === "POST" && path === "/api/research/subreddit") {
-        return await handleResearchSubreddit(request, env);
+        const response = await trace(
+          "subreddit:research",
+          () => handleResearchSubreddit(request, env),
+          { project: "agentdata-backend-prod" },
+        );
+        if (env.POSTHOG_API_KEY) ctx.waitUntil(flushPostHog());
+        return response;
       }
 
       const snapshotMatch = path.match(
