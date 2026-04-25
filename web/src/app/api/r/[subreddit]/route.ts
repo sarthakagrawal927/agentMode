@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { withErrorHandler, fetchJson } from "@/lib/api-utils";
 
 export const GET = withErrorHandler(async (request: Request, { params }) => {
-  const subreddit = params.subreddit;
+  const { subreddit } = await params;
   const data = await fetchJson(
     `https://www.reddit.com/r/${subreddit}/about.json`,
     {

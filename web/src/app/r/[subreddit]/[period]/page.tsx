@@ -12,11 +12,11 @@ const PERIOD_LABELS: Record<string, string> = {
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 interface PageProps {
-  params: { subreddit: string; period: string };
+  params: Promise<{ subreddit: string; period: string }>;
 }
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
-  const { subreddit, period } = params;
+  const { subreddit, period } = await params;
   const isDate = DATE_RE.test(period);
   const label = isDate ? period : (PERIOD_LABELS[period] || period);
   return {
@@ -29,8 +29,8 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   };
 }
 
-export default function SubredditPeriodPage({ params }: PageProps) {
-  const { subreddit, period } = params;
+export default async function SubredditPeriodPage({ params }: PageProps) {
+  const { subreddit, period } = await params;
   const isDate = DATE_RE.test(period);
   if (!isDate && period === 'month') {
     redirect(`/r/${subreddit}/week`);

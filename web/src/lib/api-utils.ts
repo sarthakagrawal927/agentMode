@@ -2,11 +2,11 @@ import { NextResponse } from "next/server";
 
 type ApiHandler = (
   request: Request,
-  context: { params: Record<string, string> }
+  context: { params: Promise<Record<string, string>> }
 ) => Promise<Response>;
 
 export const withErrorHandler = (handler: ApiHandler): ApiHandler => {
-  return async (request: Request, context: { params: Record<string, string> }) => {
+  return async (request: Request, context: { params: Promise<Record<string, string>> }) => {
     try {
       return await handler(request, context);
     } catch (error) {
