@@ -7,6 +7,7 @@ import Link from "next/link";
 import { ThemeProvider } from "@/components/theme-provider";
 import ThemeToggle from "@/components/ThemeToggle";
 import AuthButton from "@/components/AuthButton";
+import { SaaSMakerFeedback } from "@/components/saasmaker-feedback";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -45,6 +46,7 @@ export default function RootLayout({
         </header>
         {children}
         <Toaster />
+        <SaaSMakerFeedback />
         </ThemeProvider>
       </body>
     </html>
