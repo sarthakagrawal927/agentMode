@@ -8,10 +8,14 @@
     "start": "next start",
     "lint": "next lint",
     "cf:build": "opennextjs-cloudflare build",
-    "deploy": "pnpm cf:build && wrangler deploy"
+    "deploy": "pnpm cf:build && wrangler deploy",
+    "prepare": "cd .. && husky"
   },
   "dependencies": {
     "@hookform/resolvers": "5.2.2",
+    "@saas-maker/changelog-widget": "^0.2.1",
+    "@saas-maker/feedback": "^0.2.1",
+    "@saas-maker/testimonials": "^0.2.1",
     "@radix-ui/react-accordion": "1.2.12",
     "@radix-ui/react-alert-dialog": "1.1.15",
     "@radix-ui/react-aspect-ratio": "1.1.8",
@@ -62,6 +66,7 @@
   "devDependencies": {
     "@opennextjs/cloudflare": "1.19.4",
     "@playwright/test": "1.59.1",
+    "husky": "^9.1.7",
     "@tailwindcss/postcss": "4",
     "@types/node": "25.6.0",
     "@types/react": "19",
