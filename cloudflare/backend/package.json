@@ -10,10 +10,11 @@
     "whoami": "wrangler whoami"
   },
   "dependencies": {
-    "@libsql/client": "^0.17.3",
-    "@saas-maker/ops": "^0.1.1"
+    "@libsql/client": "0.17.3",
+    "@saas-maker/ops": "workspace:*" 
   },
   "devDependencies": {
-    "wrangler": "^4.85.0"
-  }
+    "wrangler": "4.85.0"
+  },
+  "prettier": "@saas-maker/prettier-config"
 }
