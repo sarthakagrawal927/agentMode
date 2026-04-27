@@ -3,7 +3,7 @@ set -e
 
 # Lint (fast — Biome or ESLint, whatever is configured)
 if grep -q '"lint"' package.json 2>/dev/null; then
-  pnpm run lint --if-present || { echo "lint failed — fix before pushing" >&2; exit 1; }
+  pnpm run --if-present lint || { echo "lint failed — fix before pushing" >&2; exit 1; }
 fi
 
 # Secret scan — abort if tokens/keys found in tracked files
