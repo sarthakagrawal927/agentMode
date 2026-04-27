@@ -44,11 +44,46 @@ const ALLOWED_SUBREDDITS = new Set(
   Object.keys(PROMPT_DEFAULTS).map((item) => item.toLowerCase()),
 );
 
+const CORS_ALLOWED_ORIGINS = new Set([
+  "https://agent-mode.vercel.app",
+  "https://agentmode-web.sarthakagrawal927.workers.dev",
+  "http://localhost:3000",
+]);
+
 const CORS_BASE_HEADERS: Record<string, string> = {
-  "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET,POST,DELETE,OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type,Authorization",
+  "Access-Control-Allow-Credentials": "true",
+  "Vary": "Origin",
 };
+
+const AUTH_COOKIE_NAME = "agentdata_auth";
+// 7 days — matches Google ID token typical refresh cadence on client
+const AUTH_COOKIE_MAX_AGE = 7 * 24 * 60 * 60;
+
+function buildAuthCookie(token: string): string {
+  return `${AUTH_COOKIE_NAME}=${token}; HttpOnly; Secure; SameSite=None; Path=/; Max-Age=${AUTH_COOKIE_MAX_AGE}`;
+}
+
+function buildAuthClearCookie(): string {
+  return `${AUTH_COOKIE_NAME}=; HttpOnly; Secure; SameSite=None; Path=/; Max-Age=0`;
+}
+
+function readAuthCookie(request: Request): string | null {
+  const header = request.headers.get("cookie");
+  if (!header) return null;
+  const match = header.match(/(?:^|;\s*)agentdata_auth=([^;]+)/);
+  return match?.[1] ?? null;
+}
+
+function extractBearerOrCookieToken(request: Request): string | null {
+  const auth = request.headers.get("Authorization") || "";
+  if (auth.startsWith("Bearer ")) {
+    const token = auth.slice("Bearer ".length).trim();
+    if (token) return token;
+  }
+  return readAuthCookie(request);
+}
 
 const DB_SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS cache_entries (
@@ -175,6 +210,43 @@ function mergeHeaders(extra?: HeadersInit): Headers {
     new Headers(extra).forEach((value, key) => headers.set(key, value));
   }
   return headers;
+}
+
+function applyCorsOrigin(response: Response, origin: string | null): Response {
+  if (!origin) return response;
+  const allowed = CORS_ALLOWED_ORIGINS.has(origin) ? origin : null;
+  if (!allowed) return response;
+  try {
+    response.headers.set("Access-Control-Allow-Origin", allowed);
+    return response;
+  } catch {
+    const clonedHeaders = new Headers(response.headers);
+    clonedHeaders.set("Access-Control-Allow-Origin", allowed);
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: clonedHeaders,
+    });
+  }
+}
+
+function applyCorsOrigin(response: Response, origin: string | null): Response {
+  if (!origin) return response;
+  const allowed = CORS_ALLOWED_ORIGINS.has(origin) ? origin : null;
+  if (!allowed) return response;
+  // Response headers may be immutable; clone via new Response if so
+  try {
+    response.headers.set("Access-Control-Allow-Origin", allowed);
+    return response;
+  } catch {
+    const clonedHeaders = new Headers(response.headers);
+    clonedHeaders.set("Access-Control-Allow-Origin", allowed);
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: clonedHeaders,
+    });
+  }
 }
 
 function jsonResponse(payload: unknown, status = 200): Response {
@@ -666,12 +738,8 @@ async function requireAdmin(request: Request, env: Env): Promise<string> {
   if (allowed.size === 0) {
     throw new HttpError(500, "Admin access is not configured on the server");
   }
-  const auth = request.headers.get("Authorization") || "";
-  if (!auth.startsWith("Bearer ")) {
-    throw new HttpError(401, "Missing Authorization header");
-  }
-  const token = auth.slice("Bearer ".length).trim();
-  if (!token) throw new HttpError(401, "Missing Authorization token");
+  const token = extractBearerOrCookieToken(request);
+  if (!token) throw new HttpError(401, "Missing authentication");
   const info = await verifyGoogleToken(token);
   if (!allowed.has(info.email)) throw new HttpError(403, "Admin access required");
   return info.email;
@@ -683,10 +751,8 @@ async function requireUser(
   request: Request,
   env: Env,
 ): Promise<UserRow> {
-  const auth = request.headers.get("Authorization") || "";
-  if (!auth.startsWith("Bearer ")) throw new HttpError(401, "Missing Authorization header");
-  const token = auth.slice("Bearer ".length).trim();
-  if (!token) throw new HttpError(401, "Missing Authorization token");
+  const token = extractBearerOrCookieToken(request);
+  if (!token) throw new HttpError(401, "Missing authentication");
   const info = await verifyGoogleToken(token);
   await ensureDbInitialized(env);
   const db = getDb(env);
@@ -714,7 +780,22 @@ async function requireUser(
 
 async function handleAuthSession(request: Request, env: Env): Promise<Response> {
   const user = await requireUser(request, env);
-  return jsonResponse(user);
+  const response = jsonResponse(user);
+  // If sign-in came in via Authorization header (initial Google credential),
+  // promote it to an httpOnly cookie so subsequent requests don't need
+  // localStorage. The cookie is the authoritative session store.
+  const auth = request.headers.get("Authorization") || "";
+  if (auth.startsWith("Bearer ")) {
+    const token = auth.slice("Bearer ".length).trim();
+    if (token) response.headers.append("Set-Cookie", buildAuthCookie(token));
+  }
+  return response;
+}
+
+async function handleAuthLogout(): Promise<Response> {
+  const response = jsonResponse({ ok: true });
+  response.headers.append("Set-Cookie", buildAuthClearCookie());
+  return response;
 }
 
 async function handleTrackSubreddit(request: Request, env: Env): Promise<Response> {
@@ -2024,7 +2105,10 @@ let phConfigured = false;
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    if (request.method === "OPTIONS") return noContent();
+    const requestOrigin = request.headers.get("Origin");
+    if (request.method === "OPTIONS") {
+      return applyCorsOrigin(noContent(), requestOrigin);
+    }
 
     if (!phConfigured && env.POSTHOG_API_KEY) {
       configurePostHog(env.POSTHOG_API_KEY, "https://us.i.posthog.com");
@@ -2040,10 +2124,15 @@ export default {
     const clientIp = request.headers.get("CF-Connecting-IP") || request.headers.get("X-Forwarded-For") || "unknown";
     const rateLimit = path === "/api/research/subreddit" ? RATE_LIMIT_RESEARCH : RATE_LIMIT_DEFAULT;
     if (path.startsWith("/api/") && !checkRateLimit(clientIp, rateLimit)) {
-      return jsonResponse({ detail: "Too many requests. Please try again later." }, 429);
+      return applyCorsOrigin(
+        jsonResponse({ detail: "Too many requests. Please try again later." }, 429),
+        requestOrigin,
+      );
     }
 
-    try {
+    const wrap = (response: Response): Response => applyCorsOrigin(response, requestOrigin);
+
+    const route = async (): Promise<Response> => {
       if (method === "GET" && path === "/") {
         return jsonResponse({ status: "API is running" });
       }
@@ -2127,6 +2216,10 @@ export default {
         return await handleAuthSession(request, env);
       }
 
+      if (method === "POST" && path === "/api/auth/logout") {
+        return await handleAuthLogout();
+      }
+
       if (method === "POST" && path === "/api/subreddits/track") {
         return await handleTrackSubreddit(request, env);
       }
@@ -2155,11 +2248,7 @@ export default {
       }
 
       if (method === "GET" && path === "/api/admin/check") {
-        const auth = request.headers.get("Authorization") || "";
-        if (!auth.startsWith("Bearer ")) {
-          return jsonResponse({ isAdmin: false });
-        }
-        const token = auth.slice("Bearer ".length).trim();
+        const token = extractBearerOrCookieToken(request);
         if (!token) return jsonResponse({ isAdmin: false });
         try {
           const info = await verifyGoogleToken(token);
@@ -2171,8 +2260,13 @@ export default {
       }
 
       return jsonResponse({ detail: "Not found" }, 404);
+    };
+
+    try {
+      const response = await route();
+      return wrap(response);
     } catch (error) {
-      return toErrorResponse(error);
+      return wrap(toErrorResponse(error));
     }
   },
 

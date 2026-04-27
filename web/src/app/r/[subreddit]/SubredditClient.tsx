@@ -331,17 +331,17 @@ export default function SubredditClient({
   }, []);
 
   useEffect(() => {
-    const headers = getAuthHeaders();
-    if (!headers.Authorization) {
+    if (!authUser) {
       setIsAdmin(false);
       return;
     }
     let cancelled = false;
-    api.checkAdmin(headers).then((result) => {
+    // Auth flows via httpOnly cookie now; no headers needed.
+    api.checkAdmin().then((result) => {
       if (!cancelled) setIsAdmin(result);
     });
     return () => { cancelled = true; };
-  }, [authUser?.idToken]);
+  }, [authUser?.email]);
 
   useEffect(() => {
     if (isArchive) return;
@@ -430,6 +430,7 @@ export default function SubredditClient({
       const resp = await fetch(`${API_BASE_URL}/research/subreddit/summary/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        credentials: 'include',
         body: JSON.stringify({
           subreddit_name: subreddit,
           duration,
@@ -804,6 +805,7 @@ export default function SubredditClient({
                         {
                           method: 'DELETE',
                           headers: getAuthHeaders(),
+                          credentials: 'include',
                         },
                       );
                       if (!resp.ok) {
@@ -836,6 +838,7 @@ export default function SubredditClient({
                         {
                           method: 'POST',
                           headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+                          credentials: 'include',
                           body: JSON.stringify({ prompt }),
                         },
                       );

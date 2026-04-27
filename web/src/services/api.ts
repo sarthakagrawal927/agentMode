@@ -65,8 +65,15 @@ const callApi = async <T>(endpoint: string, params: T) => {
 };
 
 async function authedFetch(path: string, options: RequestInit = {}): Promise<Response> {
+  // Auth now flows via httpOnly cookie; getAuthHeaders() is a no-op kept for
+  // backward compatibility. We must include credentials so the cookie ships
+  // cross-origin (frontend on Vercel, backend on Workers).
   const headers = { ...getAuthHeaders(), ...options.headers } as Record<string, string>;
-  return fetch(`${API_BASE_URL}${path}`, { ...options, headers });
+  return fetch(`${API_BASE_URL}${path}`, {
+    ...options,
+    headers,
+    credentials: "include",
+  });
 }
 
 export const api = {
@@ -102,10 +109,11 @@ export const api = {
     return resp.json();
   },
 
-  async checkAdmin(authHeaders: Record<string, string>): Promise<boolean> {
+  async checkAdmin(authHeaders: Record<string, string> = {}): Promise<boolean> {
     try {
       const resp = await fetch(`${API_BASE_URL}/admin/check`, {
         headers: authHeaders,
+        credentials: "include",
         cache: "no-store",
       });
       if (!resp.ok) return false;
