@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@libsql/client": "0.17.3",
-    "@saas-maker/ops": "workspace:*" 
+    "@saas-maker/ops": "^1.0.0" 
   },
   "devDependencies": {
     "wrangler": "4.85.0"

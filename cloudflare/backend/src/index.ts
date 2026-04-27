@@ -230,25 +230,6 @@ function applyCorsOrigin(response: Response, origin: string | null): Response {
   }
 }
 
-function applyCorsOrigin(response: Response, origin: string | null): Response {
-  if (!origin) return response;
-  const allowed = CORS_ALLOWED_ORIGINS.has(origin) ? origin : null;
-  if (!allowed) return response;
-  // Response headers may be immutable; clone via new Response if so
-  try {
-    response.headers.set("Access-Control-Allow-Origin", allowed);
-    return response;
-  } catch {
-    const clonedHeaders = new Headers(response.headers);
-    clonedHeaders.set("Access-Control-Allow-Origin", allowed);
-    return new Response(response.body, {
-      status: response.status,
-      statusText: response.statusText,
-      headers: clonedHeaders,
-    });
-  }
-}
-
 function jsonResponse(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
     status,
