@@ -7,6 +7,7 @@ import Link from "next/link";
 import { ThemeProvider } from "@/components/theme-provider";
 import ThemeToggle from "@/components/ThemeToggle";
 import AuthButton from "@/components/AuthButton";
+import { AnalyticsProvider } from "@/components/posthog-provider";
 import { SaaSMakerFeedback } from "@/components/saasmaker-feedback";
 
 const inter = Inter({
@@ -26,6 +27,7 @@ export default function RootLayout({
       <Script src="https://accounts.google.com/gsi/client" strategy="afterInteractive" />
       <body className="min-h-screen bg-background">
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+        <AnalyticsProvider>
         <header className="sticky top-0 z-50 border-b bg-background/80 backdrop-blur-sm">
           <div className="container mx-auto flex items-center justify-between px-6 py-3">
             <Link href="/" className="text-lg font-bold tracking-tight hover:opacity-80 transition-opacity">
@@ -47,6 +49,7 @@ export default function RootLayout({
         {children}
         <Toaster />
         <SaaSMakerFeedback />
+        </AnalyticsProvider>
         </ThemeProvider>
       </body>
     </html>
